@@ -1,0 +1,14 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+cmd = "go build -buildvcs=false -o ./tmp/university-agency.exe ./cmd/server"
+bin = "./tmp/university-agency.exe"
+delay = 1000
+exclude_dir = ["bin", "documentations", "tmp"]
+include_ext = ["go", "css", "js", "webmanifest"]
+kill_delay = "500ms"
+stop_on_error = true
+
+[log]
+time = true

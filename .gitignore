@@ -1,0 +1,6 @@
+.env
+.air.toml.tmp
+bin/
+tmp/
+data/uploads/
+*.log

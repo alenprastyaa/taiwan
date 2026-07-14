@@ -1,0 +1,33 @@
+{
+  "name": "Taiwan Education Consulting Dashboard",
+  "short_name": "TaiwanEC",
+  "description": "Dashboard operasional owner, staff, dan client untuk layanan studi Taiwan.",
+  "start_url": "/owner",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f8fc",
+  "theme_color": "#071225",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Owner",
+      "url": "/owner"
+    },
+    {
+      "name": "Staff",
+      "url": "/staff"
+    },
+    {
+      "name": "Client",
+      "url": "/student"
+    }
+  ]
+}

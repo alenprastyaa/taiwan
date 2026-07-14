@@ -1,0 +1,43 @@
+- golang (gochi)
+- templ (a-h/templ) + htmx + tailwind
+- implement golang best practice + clean architecture + graceful shutdown + very secure + very lightweight + 12 factor app + design pattern
+- go runner (hot reload)
+- database bisa switching tergantung kebutuhan (bisa pakai postgresql atau mysql/mariadb), intinya agnostik gitu, dan nanti maunya tuh kalo env nga ganti entah itu mysql/posgre, ya bisa jalan (asal struktur data table nya sesuai juga).
+  + mysql/mariadb (database)
+    credential: (menyusul aja, intinya siap sedia kedepan nya, autoswitching gitu)
+  + postgresql
+    credential: username: postgres; pw: postgres; dbname:university_agency
+- segala credential dan settingan lain nya aku mau di simpan di .env
+- aku mau tampilan web nya tuh bisa dijadikan SPA, supaya web tuh bisa di install di android juga.
+- aku juga mau nanti web nya sangat sangat ramah SEO
+
+- kamu lanjut ke BE nya sekarang, aku mau end to end harus bisa dan running tanpa bug..
+- di header kan ada tab Owner | Staff | Client, nah itu kamu ilangin
+- aku mau semuanya berjalan sebagaimana mestinya, dan aku mau semuanya berjalan mengikuti apa yang ada di tampilan (tanpa ada bug sama sekali)
+- intinya aku mau semuanya langsung jalan ya, karena ASAP..
+- untuk login pake username password biasa aja dulu, dan yang bisa register kan student saat ini cuma owner dan staff aja..
+- aku mau fitur fitur yang ada di owner gak bisa di lihat oleh staff dan student; fitur staff gak bisa di lihat student; tapi staff bisa lihat student; dan owner bisa lihat semuanya..
+- pembelian layanan atau paket, saat ini masih transfer manual, nanti bisa kita data manual siapa siapa aja yang udah bayar, nanti nandain user yang udah bayar tuh by kode pesanan aja.
+- untuk fitur chat tuh harus bener bener berfungsi ya.. nanti pakai websocket aja..
+- aku mau aplikasi ini harus secure banget, kamu bikin sistem RBAC nya (role: owner, staff, dan client)
+- dan yaa.. aku mau semuanya berjalan end to end, harus bener bener jalan tanpa kamu akalin ini itu nya (biasanya kamu suka akalin sesuatu kalo ASAP)
+
+KAMU TELAH MELANGGAR PELANGGARAN BESAR:
+-
+
+Baik mas, berarti
+
+
+@~Fendy Setiawan @~Yusuf mintoll pull
+- gateway svc
+- calculator svc
+- insured svc
+ke PRODUCTION
+
+update list
+- takafull endpoint developed
+
+thanks
+
+
+
