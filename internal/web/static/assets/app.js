@@ -1,6 +1,26 @@
 const sidebarOpenClass = "sidebar-open";
 let chatSocket;
 
+function bindAutoSubmitSelects() {
+  // Delegated so it keeps working after htmx swaps #app (pipeline stage-move selects).
+  document.addEventListener("change", (event) => {
+    const select = event.target.closest("select[data-autosubmit]");
+    if (select && select.form) {
+      select.form.requestSubmit();
+    }
+  });
+}
+
+function bindConfirmForms() {
+  // Delegated confirm() guard for destructive actions (e.g. deleting a pipeline stage).
+  document.addEventListener("submit", (event) => {
+    const form = event.target.closest("form[data-confirm]");
+    if (form && !window.confirm(form.dataset.confirm)) {
+      event.preventDefault();
+    }
+  });
+}
+
 function closeSidebar() {
   document.body.classList.remove(sidebarOpenClass);
 }
@@ -85,6 +105,56 @@ function bindChat() {
     }
     chatSocket.send(JSON.stringify({ body }));
     input.value = "";
+  });
+}
+
+function bindDemoAccounts() {
+  document.querySelectorAll(".demo-account").forEach((button) => {
+    button.addEventListener("click", () => {
+      const form = button.closest(".auth-panel")?.querySelector(".auth-form");
+      const usernameInput = form?.querySelector('[name="username"]');
+      const passwordInput = form?.querySelector('[name="password"]');
+      if (!usernameInput || !passwordInput) {
+        return;
+      }
+      usernameInput.value = button.dataset.demoUsername;
+      passwordInput.value = button.dataset.demoPassword;
+      passwordInput.focus();
+    });
+  });
+}
+
+function bindRejectModal() {
+  // Delegated handlers, attached once — survive htmx #app swaps.
+  document.addEventListener("click", (event) => {
+    const trigger = event.target.closest("[data-reject-url]");
+    if (trigger) {
+      const modal = document.querySelector("[data-reject-modal]");
+      if (!modal) {
+        return;
+      }
+      const form = modal.querySelector("[data-reject-form]");
+      const textarea = form.querySelector('textarea[name="reason"]');
+      form.setAttribute("action", trigger.dataset.rejectUrl);
+      modal.querySelector("[data-reject-target]").textContent = trigger.dataset.rejectName || "";
+      textarea.value = "";
+      modal.removeAttribute("hidden");
+      textarea.focus();
+      return;
+    }
+    const openModal = document.querySelector("[data-reject-modal]:not([hidden])");
+    if (openModal && (event.target.closest("[data-reject-cancel]") || event.target === openModal)) {
+      openModal.setAttribute("hidden", "");
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      const openModal = document.querySelector("[data-reject-modal]:not([hidden])");
+      if (openModal) {
+        openModal.setAttribute("hidden", "");
+      }
+    }
   });
 }
 
@@ -184,6 +254,10 @@ document.addEventListener("DOMContentLoaded", () => {
   bindShell();
   bindNavigation();
   bindChat();
+  bindDemoAccounts();
+  bindRejectModal();
+  bindAutoSubmitSelects();
+  bindConfirmForms();
   syncTitle();
   registerServiceWorker();
 });

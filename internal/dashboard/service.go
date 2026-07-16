@@ -18,6 +18,8 @@ type Repository interface {
 	ListExpenses(ctx context.Context, viewer User, viewRole Role) ([]Expense, error)
 	ListConversations(ctx context.Context, viewer User) ([]ChatConversation, error)
 	ListMessages(ctx context.Context, viewer User, conversationID string) ([]ChatMessage, error)
+	ListPipelineStages(ctx context.Context) ([]PipelineStage, error)
+	ListServicePackages(ctx context.Context) ([]ServicePackage, error)
 }
 
 type CompanySnapshot struct {
@@ -31,8 +33,16 @@ type CompanySnapshot struct {
 }
 
 type ViewOptions struct {
-	ConversationID string
-	Flash          string
+	ConversationID   string
+	Flash            string
+	OrderCode        string
+	InvoiceFilter    string
+	ClientStatus     string
+	ClientPackage    string
+	ClientPIC        string
+	ClientSearch     string
+	ShowCreateForm   bool
+	ShowStageManager bool
 }
 
 type Service struct {
@@ -92,6 +102,16 @@ func (s Service) View(ctx context.Context, appName, appURL string, viewer User, 
 		if vm.Expenses, err = s.repository.ListExpenses(ctx, viewer, role); err != nil {
 			return ViewModel{}, fmt.Errorf("load expenses: %w", err)
 		}
+		if role == RoleOwner || role == RoleStaff {
+			if vm.PipelineStages, err = s.repository.ListPipelineStages(ctx); err != nil {
+				return ViewModel{}, fmt.Errorf("load pipeline stages: %w", err)
+			}
+		}
+		if role == RoleOwner && section == SectionServices {
+			if vm.ServicePackages, err = s.repository.ListServicePackages(ctx); err != nil {
+				return ViewModel{}, fmt.Errorf("load service packages: %w", err)
+			}
+		}
 		if section == SectionChat && vm.StudentFeatureAccess {
 			if vm.Conversations, err = s.repository.ListConversations(ctx, viewer); err != nil {
 				return ViewModel{}, fmt.Errorf("load conversations: %w", err)
@@ -104,6 +124,15 @@ func (s Service) View(ctx context.Context, appName, appURL string, viewer User, 
 			}
 		}
 	}
+
+	vm.ActiveOrderCode = options.OrderCode
+	vm.InvoiceFilter = options.InvoiceFilter
+	vm.FilterStatus = options.ClientStatus
+	vm.FilterPackage = options.ClientPackage
+	vm.FilterPIC = options.ClientPIC
+	vm.FilterSearch = options.ClientSearch
+	vm.ShowCreateForm = options.ShowCreateForm
+	vm.ShowStageManager = options.ShowStageManager
 
 	vm.UserName = viewer.Name
 	vm.UserRole = viewer.Role.Label()

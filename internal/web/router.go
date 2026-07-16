@@ -1,8 +1,8 @@
 package web
 
 import (
-	"bytes"
 	"context"
+	"encoding/csv"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,9 +42,22 @@ type Store interface {
 	SubmitPaymentProof(ctx context.Context, viewer dashboard.User, code, note, fileName, storagePath string) (dashboard.Order, error)
 	StudentHasPaymentAccess(ctx context.Context, viewer dashboard.User) (bool, error)
 	UploadStudentDocument(ctx context.Context, viewer dashboard.User, documentName, fileName, storagePath string) (dashboard.Document, error)
-	ReviewDocument(ctx context.Context, viewer dashboard.User, documentID string, status dashboard.DocumentStatus) (dashboard.Document, error)
+	ReviewDocument(ctx context.Context, viewer dashboard.User, documentID string, status dashboard.DocumentStatus, note string) (dashboard.Document, error)
 	CompleteTask(ctx context.Context, viewer dashboard.User, taskID string) (dashboard.Task, error)
 	SaveMessage(ctx context.Context, viewer dashboard.User, conversationID, body string) (dashboard.ChatMessage, error)
+	CreateTask(ctx context.Context, viewer dashboard.User, input dashboard.CreateTaskInput) (dashboard.Task, error)
+	CreateExpense(ctx context.Context, viewer dashboard.User, input dashboard.CreateExpenseInput) (dashboard.Expense, error)
+	CreateSchedule(ctx context.Context, viewer dashboard.User, input dashboard.CreateScheduleInput) (dashboard.ScheduleItem, error)
+	BulkApproveDocuments(ctx context.Context, viewer dashboard.User) (int, error)
+	CreatePipelineStage(ctx context.Context, viewer dashboard.User, name string) (dashboard.PipelineStage, error)
+	RenamePipelineStage(ctx context.Context, viewer dashboard.User, stageID, name string) (dashboard.PipelineStage, error)
+	DeletePipelineStage(ctx context.Context, viewer dashboard.User, stageID string) error
+	ReorderPipelineStage(ctx context.Context, viewer dashboard.User, stageID, direction string) error
+	UpdateClientStage(ctx context.Context, viewer dashboard.User, clientID, stageName string) (dashboard.ClientProfile, error)
+	CreateServicePackage(ctx context.Context, viewer dashboard.User, input dashboard.ServicePackageInput) (dashboard.ServicePackage, error)
+	UpdateServicePackage(ctx context.Context, viewer dashboard.User, packageID string, input dashboard.ServicePackageInput) (dashboard.ServicePackage, error)
+	DeleteServicePackage(ctx context.Context, viewer dashboard.User, packageID string) error
+	ReorderServicePackage(ctx context.Context, viewer dashboard.User, packageID, direction string) error
 }
 
 type Handler struct {
@@ -95,11 +109,30 @@ func NewRouter(deps Dependencies) http.Handler {
 		r.Post("/owner/orders/mark-paid", h.markOrderPaid)
 		r.Post("/student/payments/proof", h.submitPaymentProof)
 		r.Get("/student/payments/{orderCode}/invoice.pdf", h.studentInvoicePDF)
+		r.Get("/owner/invoices/{orderCode}/invoice.pdf", h.studentInvoicePDF)
 		r.Post("/student/documents/upload", h.uploadStudentDocument)
 		r.Get("/student/documents/{documentID}/download", h.downloadStudentDocument)
 		r.Post("/staff/documents/{documentID}/approve", h.approveDocument)
 		r.Post("/staff/documents/{documentID}/reject", h.rejectDocument)
+		r.Post("/staff/documents/bulk-approve", h.bulkApproveDocuments)
 		r.Post("/staff/tasks/{taskID}/complete", h.completeTask)
+		r.Post("/staff/tasks/create", h.createTask)
+		r.Post("/staff/expenses/create", h.createExpense)
+		r.Get("/staff/expenses/{expenseID}/receipt", h.downloadExpenseReceipt)
+		r.Post("/staff/calendar/create", h.createSchedule)
+		r.Get("/owner/clients/export", h.exportClients)
+		r.Get("/staff/clients/export", h.exportClients)
+		r.Get("/owner/finance/export", h.exportFinance)
+		r.Get("/owner/reports/export", h.exportFinance)
+		r.Post("/pipeline/stages/create", h.createPipelineStage)
+		r.Post("/pipeline/stages/{stageID}/rename", h.renamePipelineStage)
+		r.Post("/pipeline/stages/{stageID}/delete", h.deletePipelineStage)
+		r.Post("/pipeline/stages/{stageID}/move", h.movePipelineStage)
+		r.Post("/pipeline/clients/{clientID}/stage", h.updateClientStage)
+		r.Post("/owner/services/create", h.createServicePackage)
+		r.Post("/owner/services/{packageID}/update", h.updateServicePackage)
+		r.Post("/owner/services/{packageID}/delete", h.deleteServicePackage)
+		r.Post("/owner/services/{packageID}/move", h.moveServicePackage)
 		r.Post("/chat/{conversationID}/messages", h.postChatMessage)
 		r.Get("/ws/chat/{conversationID}", h.chatWebSocket)
 		r.Get("/client", h.clientAlias)
@@ -137,8 +170,16 @@ func (h Handler) page(w http.ResponseWriter, r *http.Request) {
 
 	section := dashboard.ParseSection(strings.ToLower(chi.URLParam(r, "section")))
 	vm, err := h.dashboard.View(r.Context(), h.cfg.App.Name, h.cfg.App.URL, currentUser(r), role, section, dashboard.ViewOptions{
-		ConversationID: r.URL.Query().Get("conversation"),
-		Flash:          r.URL.Query().Get("notice"),
+		ConversationID:   r.URL.Query().Get("conversation"),
+		Flash:            r.URL.Query().Get("notice"),
+		OrderCode:        r.URL.Query().Get("order"),
+		InvoiceFilter:    r.URL.Query().Get("filter"),
+		ClientStatus:     r.URL.Query().Get("status"),
+		ClientPackage:    r.URL.Query().Get("package"),
+		ClientPIC:        r.URL.Query().Get("pic"),
+		ClientSearch:     r.URL.Query().Get("q"),
+		ShowCreateForm:   r.URL.Query().Get("new") == "1",
+		ShowStageManager: r.URL.Query().Get("manage") == "1",
 	})
 	if err != nil {
 		if errors.Is(err, dashboard.ErrForbidden) {
@@ -179,24 +220,34 @@ func (h Handler) loginPage(w http.ResponseWriter, r *http.Request) {
 		Title:    "Login",
 		Subtitle: "Masuk dengan username dan password.",
 		Notice:   r.URL.Query().Get("notice"),
-		Error:    r.URL.Query().Get("error"),
 	})
 }
 
 func (h Handler) login(w http.ResponseWriter, r *http.Request) {
+	loginError := func(status int, message string) {
+		h.renderAuthStatus(w, r, ui.AuthPage{
+			AppName:  h.cfg.App.Name,
+			AppURL:   h.cfg.App.URL,
+			Mode:     "login",
+			Title:    "Login",
+			Subtitle: "Masuk dengan username dan password.",
+			Error:    message,
+		}, status)
+	}
+
 	if err := r.ParseForm(); err != nil {
-		http.Redirect(w, r, "/login?error="+url.QueryEscape("Form tidak valid."), http.StatusSeeOther)
+		loginError(http.StatusBadRequest, "Form tidak valid.")
 		return
 	}
 	user, err := h.store.FindUserByUsername(r.Context(), r.FormValue("username"))
 	if err != nil || !security.CheckPassword(user.PasswordHash, r.FormValue("password")) {
-		http.Redirect(w, r, "/login?error="+url.QueryEscape("Username atau password salah."), http.StatusSeeOther)
+		loginError(http.StatusUnauthorized, "Username atau password salah.")
 		return
 	}
 	session, err := h.sessions.Create(user)
 	if err != nil {
 		h.logger.Error("create session", "error", err)
-		http.Redirect(w, r, "/login?error="+url.QueryEscape("Gagal membuat session."), http.StatusSeeOther)
+		loginError(http.StatusInternalServerError, "Gagal membuat session.")
 		return
 	}
 	h.setSessionCookie(w, r, session)
@@ -214,7 +265,6 @@ func (h Handler) registerPage(w http.ResponseWriter, r *http.Request) {
 		Mode:     "register",
 		Title:    "Register Client",
 		Subtitle: "Buat akun client/student baru.",
-		Error:    r.URL.Query().Get("error"),
 	})
 }
 
@@ -224,8 +274,19 @@ func (h Handler) register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "akses ditolak", http.StatusForbidden)
 		return
 	}
+	registerError := func(status int, message string) {
+		h.renderAuthStatus(w, r, ui.AuthPage{
+			AppName:  h.cfg.App.Name,
+			AppURL:   h.cfg.App.URL,
+			Mode:     "register",
+			Title:    "Register Client",
+			Subtitle: "Buat akun client/student baru.",
+			Error:    message,
+		}, status)
+	}
+
 	if err := r.ParseForm(); err != nil {
-		http.Redirect(w, r, "/register?error="+url.QueryEscape("Form tidak valid."), http.StatusSeeOther)
+		registerError(http.StatusBadRequest, "Form tidak valid.")
 		return
 	}
 	user, err := h.store.CreateStudent(r.Context(), dashboard.CreateStudentInput{
@@ -236,8 +297,7 @@ func (h Handler) register(w http.ResponseWriter, r *http.Request) {
 		Phone:    r.FormValue("phone"),
 	})
 	if err != nil {
-		message := "Registrasi gagal. Username harus unik dan password minimal 8 karakter."
-		http.Redirect(w, r, "/register?error="+url.QueryEscape(message), http.StatusSeeOther)
+		registerError(http.StatusUnprocessableEntity, "Registrasi gagal. Username harus unik dan password minimal 8 karakter.")
 		return
 	}
 	target := "/" + currentPageRole(viewer.Role).String() + "/clients?notice=" + url.QueryEscape("Akun client "+user.Username+" sudah dibuat.")
@@ -336,26 +396,35 @@ func (h Handler) downloadStudentDocument(w http.ResponseWriter, r *http.Request)
 	http.NotFound(w, r)
 }
 
+func (h Handler) downloadExpenseReceipt(w http.ResponseWriter, r *http.Request) {
+	expenseID := chi.URLParam(r, "expenseID")
+	viewer := currentUser(r)
+	expenses, err := h.store.ListExpenses(r.Context(), viewer, viewer.Role)
+	if err != nil {
+		http.Error(w, "akses ditolak", http.StatusForbidden)
+		return
+	}
+	for _, expense := range expenses {
+		if expense.ID == expenseID && expense.ReceiptStoragePath != "" {
+			w.Header().Set("Content-Disposition", "attachment; filename="+strconvQuote(expense.ReceiptFileName))
+			http.ServeFile(w, r, expense.ReceiptStoragePath)
+			return
+		}
+	}
+	http.NotFound(w, r)
+}
+
 func (h Handler) studentInvoicePDF(w http.ResponseWriter, r *http.Request) {
 	code := chi.URLParam(r, "orderCode")
-	orders, err := h.store.ListOrders(r.Context(), currentUser(r), dashboard.RoleStudent)
+	viewer := currentUser(r)
+	orders, err := h.store.ListOrders(r.Context(), viewer, viewer.Role)
 	if err != nil {
 		http.Error(w, "akses invoice ditolak", http.StatusForbidden)
 		return
 	}
 	for _, order := range orders {
 		if strings.EqualFold(order.Code, code) {
-			body := []string{
-				"Taiwan Education Consulting",
-				"Invoice " + order.Code,
-				"Client: " + order.ClientName,
-				"Paket: " + order.PackageName,
-				"Total: " + formatIDR(order.Total),
-				"Sudah Dibayar: " + formatIDR(order.Paid),
-				"Sisa: " + formatIDR(maxInt64(order.Total-order.Paid, 0)),
-				"Status: " + string(order.Status),
-			}
-			pdf := simplePDF(body)
+			pdf := renderInvoicePDF(h.cfg.App.Name, order)
 			w.Header().Set("Content-Type", "application/pdf")
 			w.Header().Set("Content-Disposition", "attachment; filename="+strconvQuote(order.Code+".pdf"))
 			_, _ = w.Write(pdf)
@@ -366,15 +435,17 @@ func (h Handler) studentInvoicePDF(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) approveDocument(w http.ResponseWriter, r *http.Request) {
-	h.reviewDocument(w, r, dashboard.DocumentApproved, "Dokumen disetujui.")
+	h.reviewDocument(w, r, dashboard.DocumentApproved, "", "Dokumen disetujui.")
 }
 
 func (h Handler) rejectDocument(w http.ResponseWriter, r *http.Request) {
-	h.reviewDocument(w, r, dashboard.DocumentRevision, "Dokumen dikembalikan untuk revisi.")
+	_ = r.ParseForm()
+	reason := r.FormValue("reason")
+	h.reviewDocument(w, r, dashboard.DocumentRevision, reason, "Dokumen ditolak dan dikembalikan untuk revisi.")
 }
 
-func (h Handler) reviewDocument(w http.ResponseWriter, r *http.Request, status dashboard.DocumentStatus, notice string) {
-	_, err := h.store.ReviewDocument(r.Context(), currentUser(r), chi.URLParam(r, "documentID"), status)
+func (h Handler) reviewDocument(w http.ResponseWriter, r *http.Request, status dashboard.DocumentStatus, note, notice string) {
+	_, err := h.store.ReviewDocument(r.Context(), currentUser(r), chi.URLParam(r, "documentID"), status, note)
 	if err != nil {
 		notice = "Aksi dokumen gagal atau akses ditolak."
 	}
@@ -388,6 +459,306 @@ func (h Handler) completeTask(w http.ResponseWriter, r *http.Request) {
 		notice = "Task gagal diperbarui atau akses ditolak."
 	}
 	http.Redirect(w, r, "/staff/tasks?notice="+url.QueryEscape(notice), http.StatusSeeOther)
+}
+
+func (h Handler) bulkApproveDocuments(w http.ResponseWriter, r *http.Request) {
+	count, err := h.store.BulkApproveDocuments(r.Context(), currentUser(r))
+	notice := fmt.Sprintf("%d dokumen disetujui.", count)
+	if err != nil {
+		notice = "Aksi review massal gagal atau akses ditolak."
+	}
+	http.Redirect(w, r, "/staff/documents?notice="+url.QueryEscape(notice), http.StatusSeeOther)
+}
+
+// pipelinePath is only meaningful for owner/staff — students have no pipeline
+// page to redirect back to, so callers must reject the request before ever
+// building a URL from it.
+func pipelinePath(viewer dashboard.User) string {
+	return "/" + viewer.Role.String() + "/pipeline"
+}
+
+func canManagePipeline(viewer dashboard.User) bool {
+	return viewer.Role == dashboard.RoleOwner || viewer.Role == dashboard.RoleStaff
+}
+
+func (h Handler) createPipelineStage(w http.ResponseWriter, r *http.Request) {
+	viewer := currentUser(r)
+	if !canManagePipeline(viewer) {
+		http.Error(w, "akses ditolak", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, pipelinePath(viewer)+"?manage=1", http.StatusSeeOther)
+		return
+	}
+	_, err := h.store.CreatePipelineStage(r.Context(), viewer, r.FormValue("name"))
+	notice := "Tahap pipeline baru berhasil ditambahkan."
+	if errors.Is(err, dashboard.ErrDuplicate) {
+		notice = "Nama tahap sudah dipakai, pilih nama lain."
+	} else if err != nil {
+		notice = "Gagal menambahkan tahap. Nama tidak boleh kosong."
+	}
+	http.Redirect(w, r, pipelinePath(viewer)+"?manage=1&notice="+url.QueryEscape(notice), http.StatusSeeOther)
+}
+
+func (h Handler) renamePipelineStage(w http.ResponseWriter, r *http.Request) {
+	viewer := currentUser(r)
+	if !canManagePipeline(viewer) {
+		http.Error(w, "akses ditolak", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, pipelinePath(viewer)+"?manage=1", http.StatusSeeOther)
+		return
+	}
+	_, err := h.store.RenamePipelineStage(r.Context(), viewer, chi.URLParam(r, "stageID"), r.FormValue("name"))
+	notice := "Nama tahap berhasil diperbarui."
+	if errors.Is(err, dashboard.ErrDuplicate) {
+		notice = "Nama tahap sudah dipakai, pilih nama lain."
+	} else if err != nil {
+		notice = "Gagal mengubah nama tahap."
+	}
+	http.Redirect(w, r, pipelinePath(viewer)+"?manage=1&notice="+url.QueryEscape(notice), http.StatusSeeOther)
+}
+
+func (h Handler) deletePipelineStage(w http.ResponseWriter, r *http.Request) {
+	viewer := currentUser(r)
+	if !canManagePipeline(viewer) {
+		http.Error(w, "akses ditolak", http.StatusForbidden)
+		return
+	}
+	err := h.store.DeletePipelineStage(r.Context(), viewer, chi.URLParam(r, "stageID"))
+	notice := "Tahap pipeline dihapus. Client di tahap ini dipindah ke Belum Ditentukan."
+	if err != nil {
+		notice = "Gagal menghapus tahap."
+	}
+	http.Redirect(w, r, pipelinePath(viewer)+"?manage=1&notice="+url.QueryEscape(notice), http.StatusSeeOther)
+}
+
+func (h Handler) movePipelineStage(w http.ResponseWriter, r *http.Request) {
+	viewer := currentUser(r)
+	if !canManagePipeline(viewer) {
+		http.Error(w, "akses ditolak", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, pipelinePath(viewer)+"?manage=1", http.StatusSeeOther)
+		return
+	}
+	err := h.store.ReorderPipelineStage(r.Context(), viewer, chi.URLParam(r, "stageID"), r.FormValue("direction"))
+	notice := "?manage=1"
+	if err != nil {
+		notice = "?manage=1&notice=" + url.QueryEscape("Gagal mengubah urutan tahap.")
+	}
+	http.Redirect(w, r, pipelinePath(viewer)+notice, http.StatusSeeOther)
+}
+
+func (h Handler) updateClientStage(w http.ResponseWriter, r *http.Request) {
+	viewer := currentUser(r)
+	if !canManagePipeline(viewer) {
+		http.Error(w, "akses ditolak", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, pipelinePath(viewer), http.StatusSeeOther)
+		return
+	}
+	_, err := h.store.UpdateClientStage(r.Context(), viewer, chi.URLParam(r, "clientID"), r.FormValue("stage_name"))
+	notice := "Tahap client berhasil diperbarui."
+	if err != nil {
+		notice = "Gagal memindahkan client ke tahap ini atau akses ditolak."
+	}
+	http.Redirect(w, r, pipelinePath(viewer)+"?notice="+url.QueryEscape(notice), http.StatusSeeOther)
+}
+
+func servicePackageInputFromForm(r *http.Request) dashboard.ServicePackageInput {
+	price, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("price")), 10, 64)
+	return dashboard.ServicePackageInput{
+		Name:        r.FormValue("name"),
+		Category:    r.FormValue("category"),
+		Description: r.FormValue("description"),
+		Price:       price,
+		PriceIsFrom: r.FormValue("price_is_from") == "1",
+		Highlights:  r.FormValue("highlights"),
+	}
+}
+
+func (h Handler) createServicePackage(w http.ResponseWriter, r *http.Request) {
+	viewer := currentUser(r)
+	if viewer.Role != dashboard.RoleOwner {
+		http.Error(w, "akses ditolak", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/owner/services?manage=1", http.StatusSeeOther)
+		return
+	}
+	_, err := h.store.CreateServicePackage(r.Context(), viewer, servicePackageInputFromForm(r))
+	notice := "Paket baru berhasil ditambahkan."
+	if errors.Is(err, dashboard.ErrDuplicate) {
+		notice = "Nama paket sudah dipakai, pilih nama lain."
+	} else if err != nil {
+		notice = "Gagal menambahkan paket. Nama dan harga wajib diisi."
+	}
+	http.Redirect(w, r, "/owner/services?manage=1&notice="+url.QueryEscape(notice), http.StatusSeeOther)
+}
+
+func (h Handler) updateServicePackage(w http.ResponseWriter, r *http.Request) {
+	viewer := currentUser(r)
+	if viewer.Role != dashboard.RoleOwner {
+		http.Error(w, "akses ditolak", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/owner/services?manage=1", http.StatusSeeOther)
+		return
+	}
+	_, err := h.store.UpdateServicePackage(r.Context(), viewer, chi.URLParam(r, "packageID"), servicePackageInputFromForm(r))
+	notice := "Paket berhasil diperbarui."
+	if errors.Is(err, dashboard.ErrDuplicate) {
+		notice = "Nama paket sudah dipakai, pilih nama lain."
+	} else if err != nil {
+		notice = "Gagal memperbarui paket."
+	}
+	http.Redirect(w, r, "/owner/services?manage=1&notice="+url.QueryEscape(notice), http.StatusSeeOther)
+}
+
+func (h Handler) deleteServicePackage(w http.ResponseWriter, r *http.Request) {
+	viewer := currentUser(r)
+	if viewer.Role != dashboard.RoleOwner {
+		http.Error(w, "akses ditolak", http.StatusForbidden)
+		return
+	}
+	err := h.store.DeleteServicePackage(r.Context(), viewer, chi.URLParam(r, "packageID"))
+	notice := "Paket dihapus."
+	if err != nil {
+		notice = "Gagal menghapus paket."
+	}
+	http.Redirect(w, r, "/owner/services?manage=1&notice="+url.QueryEscape(notice), http.StatusSeeOther)
+}
+
+func (h Handler) moveServicePackage(w http.ResponseWriter, r *http.Request) {
+	viewer := currentUser(r)
+	if viewer.Role != dashboard.RoleOwner {
+		http.Error(w, "akses ditolak", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/owner/services?manage=1", http.StatusSeeOther)
+		return
+	}
+	err := h.store.ReorderServicePackage(r.Context(), viewer, chi.URLParam(r, "packageID"), r.FormValue("direction"))
+	notice := "?manage=1"
+	if err != nil {
+		notice = "?manage=1&notice=" + url.QueryEscape("Gagal mengubah urutan paket.")
+	}
+	http.Redirect(w, r, "/owner/services"+notice, http.StatusSeeOther)
+}
+
+func (h Handler) createTask(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/staff/tasks?notice="+url.QueryEscape("Form tugas tidak valid."), http.StatusSeeOther)
+		return
+	}
+	_, err := h.store.CreateTask(r.Context(), currentUser(r), dashboard.CreateTaskInput{
+		ClientID:  r.FormValue("client_id"),
+		TimeLabel: r.FormValue("time_label"),
+		Title:     r.FormValue("title"),
+		Priority:  r.FormValue("priority"),
+	})
+	notice := "Task baru berhasil ditambahkan."
+	if err != nil {
+		notice = "Gagal menambahkan task. Pastikan client dan judul tugas terisi."
+	}
+	http.Redirect(w, r, "/staff/tasks?notice="+url.QueryEscape(notice), http.StatusSeeOther)
+}
+
+func (h Handler) createExpense(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(10 << 20); err != nil && err != http.ErrNotMultipart {
+		http.Redirect(w, r, "/staff/expenses?notice="+url.QueryEscape("Form pengeluaran tidak valid."), http.StatusSeeOther)
+		return
+	}
+	amount, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("amount")), 10, 64)
+	var fileName, storagePath string
+	if saved, err := h.saveUploadedFile(r, "receipt_file", "expenses"); err == nil && saved != "" {
+		fileName = filepath.Base(saved)
+		storagePath = saved
+	} else if err != nil && !errors.Is(err, http.ErrMissingFile) {
+		http.Redirect(w, r, "/staff/expenses?notice="+url.QueryEscape("File bukti pengeluaran tidak valid."), http.StatusSeeOther)
+		return
+	}
+	_, err := h.store.CreateExpense(r.Context(), currentUser(r), dashboard.CreateExpenseInput{
+		ClientID:    r.FormValue("client_id"),
+		Need:        r.FormValue("need"),
+		Category:    r.FormValue("category"),
+		Amount:      amount,
+		DateLabel:   r.FormValue("date_label"),
+		Description: r.FormValue("description"),
+		FileName:    fileName,
+		StoragePath: storagePath,
+	})
+	notice := "Pengeluaran baru berhasil dicatat."
+	if err != nil {
+		notice = "Gagal mencatat pengeluaran. Pastikan client, keperluan, dan nominal terisi."
+	}
+	http.Redirect(w, r, "/staff/expenses?notice="+url.QueryEscape(notice), http.StatusSeeOther)
+}
+
+func (h Handler) createSchedule(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/staff/calendar?notice="+url.QueryEscape("Form jadwal tidak valid."), http.StatusSeeOther)
+		return
+	}
+	_, err := h.store.CreateSchedule(r.Context(), currentUser(r), dashboard.CreateScheduleInput{
+		ClientID:  r.FormValue("client_id"),
+		Title:     r.FormValue("title"),
+		DateLabel: r.FormValue("date_label"),
+		TimeLabel: r.FormValue("time_label"),
+		Location:  r.FormValue("location"),
+	})
+	notice := "Jadwal baru berhasil ditambahkan."
+	if err != nil {
+		notice = "Gagal menambahkan jadwal. Pastikan client dan judul jadwal terisi."
+	}
+	http.Redirect(w, r, "/staff/calendar?notice="+url.QueryEscape(notice), http.StatusSeeOther)
+}
+
+func (h Handler) exportClients(w http.ResponseWriter, r *http.Request) {
+	viewer := currentUser(r)
+	clients, err := h.store.ListClients(r.Context(), viewer, viewer.Role)
+	if err != nil {
+		http.Error(w, "akses ditolak", http.StatusForbidden)
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=clients.csv")
+	writer := csv.NewWriter(w)
+	_ = writer.Write([]string{"Nama", "Email", "Paket", "PIC", "Status", "Progress", "Jadwal Terakhir"})
+	for _, client := range clients {
+		_ = writer.Write([]string{client.Name, client.Email, client.PackageName, client.PICName, client.Status, strconv.Itoa(client.Progress) + "%", client.LastSchedule})
+	}
+	writer.Flush()
+}
+
+func (h Handler) exportFinance(w http.ResponseWriter, r *http.Request) {
+	viewer := currentUser(r)
+	orders, err := h.store.ListOrders(r.Context(), viewer, viewer.Role)
+	if err != nil {
+		http.Error(w, "akses ditolak", http.StatusForbidden)
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=finance.csv")
+	writer := csv.NewWriter(w)
+	_ = writer.Write([]string{"Kode Order", "Client", "Paket", "Total", "Sudah Dibayar", "Sisa", "Status", "Jatuh Tempo"})
+	for _, order := range orders {
+		due := ""
+		if !order.DueDate.IsZero() {
+			due = order.DueDate.Format("02 Jan 2006")
+		}
+		_ = writer.Write([]string{order.Code, order.ClientName, order.PackageName, formatIDR(order.Total), formatIDR(order.Paid), formatIDR(maxInt64(order.Total-order.Paid, 0)), string(order.Status), due})
+	}
+	writer.Flush()
 }
 
 func (h Handler) postChatMessage(w http.ResponseWriter, r *http.Request) {
@@ -412,7 +783,12 @@ func (h Handler) postChatMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) renderAuth(w http.ResponseWriter, r *http.Request, vm ui.AuthPage) {
+	h.renderAuthStatus(w, r, vm, http.StatusOK)
+}
+
+func (h Handler) renderAuthStatus(w http.ResponseWriter, r *http.Request, vm ui.AuthPage, status int) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
 	if err := ui.AuthDocument(vm).Render(r.Context(), w); err != nil {
 		h.logger.Error("render auth", "error", err)
 	}
@@ -468,50 +844,20 @@ func strconvQuote(value string) string {
 	return `"` + strings.ReplaceAll(value, `"`, "") + `"`
 }
 
-func simplePDF(lines []string) []byte {
-	var content bytes.Buffer
-	content.WriteString("BT\n/F1 12 Tf\n72 760 Td\n")
-	for i, line := range lines {
-		if i > 0 {
-			content.WriteString("0 -22 Td\n")
-		}
-		content.WriteString("(" + pdfText(line) + ") Tj\n")
-	}
-	content.WriteString("ET\n")
-
-	objects := []string{
-		"<< /Type /Catalog /Pages 2 0 R >>",
-		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-		fmt.Sprintf("<< /Length %d >>\nstream\n%sendstream", content.Len(), content.String()),
-	}
-	var out bytes.Buffer
-	out.WriteString("%PDF-1.4\n")
-	offsets := make([]int, 0, len(objects)+1)
-	offsets = append(offsets, 0)
-	for i, object := range objects {
-		offsets = append(offsets, out.Len())
-		out.WriteString(fmt.Sprintf("%d 0 obj\n%s\nendobj\n", i+1, object))
-	}
-	xref := out.Len()
-	out.WriteString(fmt.Sprintf("xref\n0 %d\n0000000000 65535 f \n", len(objects)+1))
-	for i := 1; i < len(offsets); i++ {
-		out.WriteString(fmt.Sprintf("%010d 00000 n \n", offsets[i]))
-	}
-	out.WriteString(fmt.Sprintf("trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref))
-	return out.Bytes()
-}
-
-func pdfText(value string) string {
-	value = strings.ReplaceAll(value, `\`, `\\`)
-	value = strings.ReplaceAll(value, `(`, `\(`)
-	value = strings.ReplaceAll(value, `)`, `\)`)
-	return value
-}
-
 func formatIDR(value int64) string {
-	return fmt.Sprintf("Rp %d", value)
+	sign := ""
+	if value < 0 {
+		sign = "-"
+		value = -value
+	}
+	digits := strconv.FormatInt(value, 10)
+	var parts []string
+	for len(digits) > 3 {
+		parts = append([]string{digits[len(digits)-3:]}, parts...)
+		digits = digits[:len(digits)-3]
+	}
+	parts = append([]string{digits}, parts...)
+	return sign + "Rp " + strings.Join(parts, ".")
 }
 
 func maxInt64(value, floor int64) int64 {

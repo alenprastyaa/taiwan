@@ -58,6 +58,8 @@ type ViewModel struct {
 	Orders               []Order
 	Documents            []Document
 	ProgressStages       []ProgressStage
+	PipelineStages       []PipelineStage
+	ServicePackages      []ServicePackage
 	Schedules            []ScheduleItem
 	Tasks                []Task
 	Expenses             []Expense
@@ -66,6 +68,14 @@ type ViewModel struct {
 	ActiveChatID         string
 	Flash                string
 	StudentFeatureAccess bool
+	ActiveOrderCode      string
+	InvoiceFilter        string
+	FilterStatus         string
+	FilterPackage        string
+	FilterPIC            string
+	FilterSearch         string
+	ShowCreateForm       bool
+	ShowStageManager     bool
 }
 
 type NavItem struct {
@@ -100,6 +110,32 @@ type CreateStudentInput struct {
 	Name     string
 	Email    string
 	Phone    string
+}
+
+type CreateTaskInput struct {
+	ClientID  string
+	TimeLabel string
+	Title     string
+	Priority  string
+}
+
+type CreateExpenseInput struct {
+	ClientID    string
+	Need        string
+	Category    string
+	Amount      int64
+	DateLabel   string
+	Description string
+	FileName    string
+	StoragePath string
+}
+
+type CreateScheduleInput struct {
+	ClientID  string
+	Title     string
+	DateLabel string
+	TimeLabel string
+	Location  string
 }
 
 type ClientProfile struct {
@@ -161,6 +197,7 @@ type Document struct {
 	Name        string
 	Status      DocumentStatus
 	Reviewer    string
+	ReviewNote  string
 	FileName    string
 	StoragePath string
 	UpdatedAt   time.Time
@@ -198,6 +235,40 @@ type ScheduleItem struct {
 	CreatedAt time.Time
 }
 
+// PipelineStage is an owner/staff-defined column on the pipeline kanban board.
+// Unlike ProgressStage (a per-client onboarding checklist), this is shared,
+// company-wide configuration: the set of stages every client can be placed into.
+type PipelineStage struct {
+	ID        string
+	Name      string
+	Position  int
+	Tone      string
+	CreatedAt time.Time
+}
+
+// ServicePackage is an owner-defined catalog entry on the "Paket & Layanan"
+// page — the price list clients are sold, not tied to any one client/order.
+type ServicePackage struct {
+	ID          string
+	Name        string
+	Category    string
+	Description string
+	Price       int64
+	PriceIsFrom bool
+	Highlights  string
+	Position    int
+	CreatedAt   time.Time
+}
+
+type ServicePackageInput struct {
+	Name        string
+	Category    string
+	Description string
+	Price       int64
+	PriceIsFrom bool
+	Highlights  string
+}
+
 type TaskStatus string
 
 const (
@@ -224,16 +295,18 @@ const (
 )
 
 type Expense struct {
-	ID          string
-	StaffID     string
-	ClientID    string
-	ClientName  string
-	Need        string
-	Category    string
-	Amount      int64
-	Status      ExpenseStatus
-	DateLabel   string
-	Description string
+	ID                 string
+	StaffID            string
+	ClientID           string
+	ClientName         string
+	Need               string
+	Category           string
+	Amount             int64
+	Status             ExpenseStatus
+	DateLabel          string
+	Description        string
+	ReceiptFileName    string
+	ReceiptStoragePath string
 }
 
 type ChatConversation struct {

@@ -1,4 +1,4 @@
-const CACHE_NAME = "university-agency-v5";
+const CACHE_NAME = "university-agency-v6";
 const APP_SHELL = [
   "/assets/app.css",
   "/assets/icons.css",
@@ -35,8 +35,19 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  if (APP_SHELL.includes(url.pathname)) {
-    event.respondWith(caches.match(url.pathname).then((cached) => cached || fetch(request)));
+  // Network-first for static assets so freshly deployed CSS/JS always wins;
+  // the cache is only an offline fallback. This avoids serving stale styles
+  // when the versioned query string changes.
+  if (url.pathname.startsWith("/assets/") || APP_SHELL.includes(url.pathname)) {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(url.pathname, copy));
+          return response;
+        })
+        .catch(() => caches.match(url.pathname))
+    );
     return;
   }
 

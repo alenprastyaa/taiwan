@@ -4,6 +4,8 @@ import (
 	"context"
 	"html/template"
 	"io"
+	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -13,7 +15,7 @@ import (
 	"github.com/a-h/templ"
 )
 
-const assetVersion = "20260712-student-payment-gate"
+const assetVersion = "20260716-dynamic-packages"
 
 func Document(vm dashboard.ViewModel) templ.Component {
 	return templ.ComponentFunc(func(_ context.Context, w io.Writer) error {
@@ -123,18 +125,38 @@ func sidebarHTML(vm dashboard.ViewModel) string {
 }
 
 func topbarHTML(vm dashboard.ViewModel) string {
+	clientsPath := "/" + vm.Role.String() + "/clients"
+
 	var b strings.Builder
 	b.WriteString(`<header class="topbar">`)
 	b.WriteString(`<div class="min-w-0"><h1 class="page-title">` + esc(vm.Title) + `</h1><p class="page-subtitle">` + esc(vm.Subtitle) + `</p></div>`)
 	b.WriteString(`<div class="topbar-actions">`)
 	b.WriteString(`<div class="date-pill">` + toolIconHTML("calendar") + `<span>` + esc(vm.DateLabel) + `</span></div>`)
-	b.WriteString(`<label class="search-box">` + toolIconHTML("search") + `<input type="search" placeholder="` + attr(vm.Search) + `" aria-label="Pencarian"></label>`)
-	b.WriteString(`<button type="button" class="tool-button" aria-label="Notifikasi">` + toolIconHTML("bell") + `<span class="notif-dot">5</span></button>`)
-	b.WriteString(`<button type="button" class="tool-button" aria-label="Pesan">` + toolIconHTML("mail") + `<span class="notif-dot notif-dot-red">3</span></button>`)
+	if vm.Role != dashboard.RoleStudent {
+		b.WriteString(`<form method="get" action="` + attr(clientsPath) + `" hx-get="` + attr(clientsPath) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true" class="search-box">` + toolIconHTML("search") + `<input type="search" name="q" placeholder="` + attr(vm.Search) + `" aria-label="Pencarian"></form>`)
+	} else {
+		b.WriteString(`<label class="search-box">` + toolIconHTML("search") + `<input type="search" placeholder="` + attr(vm.Search) + `" aria-label="Pencarian" disabled></label>`)
+	}
+	bellHref, mailHref := topbarLinks(vm)
+	b.WriteString(`<a class="tool-button" aria-label="Notifikasi" title="Lihat pengingat" href="` + attr(bellHref) + `" hx-get="` + attr(bellHref) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">` + toolIconHTML("bell") + `</a>`)
+	b.WriteString(`<a class="tool-button" aria-label="Pesan" title="Buka chat" href="` + attr(mailHref) + `" hx-get="` + attr(mailHref) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">` + toolIconHTML("mail") + `</a>`)
 	b.WriteString(`<div class="user-chip"><div class="avatar-sm">` + esc(vm.UserInitials) + `</div><div class="hidden min-w-0 sm:block"><p>` + esc(vm.UserName) + `</p><span>` + esc(vm.UserRole) + `</span></div></div>`)
 	b.WriteString(`<form method="post" action="/logout" class="logout-form"><button type="submit" class="outline-button small">Keluar</button></form>`)
 	b.WriteString(`</div></header>`)
 	return b.String()
+}
+
+func topbarLinks(vm dashboard.ViewModel) (bellHref, mailHref string) {
+	switch vm.Role {
+	case dashboard.RoleOwner:
+		bellHref = "/owner/invoices"
+	case dashboard.RoleStaff:
+		bellHref = "/staff/tasks"
+	default:
+		bellHref = "/student/payments"
+	}
+	mailHref = "/" + vm.Role.String() + "/chat"
+	return bellHref, mailHref
 }
 
 func contentHTML(vm dashboard.ViewModel) string {
@@ -162,9 +184,9 @@ func ownerContent(vm dashboard.ViewModel) string {
 	case dashboard.SectionClients:
 		return clientsPanel(vm, true)
 	case dashboard.SectionPipeline:
-		return ownerPipeline()
+		return ownerPipeline(vm)
 	case dashboard.SectionServices:
-		return ownerServices()
+		return ownerServices(vm)
 	case dashboard.SectionInvoices:
 		return ownerInvoices(vm)
 	case dashboard.SectionReports:
@@ -183,7 +205,7 @@ func staffContent(vm dashboard.ViewModel) string {
 	case dashboard.SectionClients:
 		return staffClients(vm)
 	case dashboard.SectionPipeline:
-		return staffPipeline()
+		return staffPipeline(vm)
 	case dashboard.SectionTasks:
 		return staffTasks(vm)
 	case dashboard.SectionDocuments:
@@ -191,7 +213,7 @@ func staffContent(vm dashboard.ViewModel) string {
 	case dashboard.SectionExpenses:
 		return staffExpenses(vm)
 	case dashboard.SectionCalendar:
-		return calendarPanel("Jadwal Staff")
+		return calendarPanel(vm, "Jadwal Staff")
 	case dashboard.SectionChat:
 		return chatPanel(vm, "Chat Klien")
 	case dashboard.SectionSettings:
@@ -301,7 +323,7 @@ func ownerDashboard(vm dashboard.ViewModel) string {
 func ownerFinance(vm dashboard.ViewModel) string {
 	return `
 <div class="space-y-5">
-  <div class="toolbar-row"><div class="tabs"><button class="tab-active">Ringkasan</button><button>Pemasukan</button><button>Pengeluaran</button><button>Piutang</button><button>Arus Kas</button></div><div class="toolbar-actions"><button class="outline-button">Juni 2026</button><button class="primary-button">Export</button></div></div>
+  <div class="toolbar-row"><div class="tabs"><span class="tab-active">Ringkasan</span><span>Pemasukan</span><span>Pengeluaran</span><span>Piutang</span><span>Arus Kas</span></div><div class="toolbar-actions"><span class="date-pill">` + esc(vm.DateLabel) + `</span><a class="primary-button" href="/owner/finance/export">Export</a></div></div>
   <section class="metric-grid metric-grid-four">
     <article class="metric-card"><div><p>Total Pemasukan</p><strong>` + money(vm.Snapshot.Revenue) + `</strong></div></article>
     <article class="metric-card"><div><p>Total Pengeluaran</p><strong>` + money(vm.Snapshot.Expenses) + `</strong></div></article>
@@ -343,58 +365,258 @@ func ownerFinance(vm dashboard.ViewModel) string {
 </div>`
 }
 
-func ownerPipeline() string {
+func ownerPipeline(vm dashboard.ViewModel) string {
 	return `
 <div class="space-y-5">
-  <div class="toolbar-row"><div class="filter-group"><button class="outline-button">Semua Paket</button><button class="outline-button">Semua Staff</button></div><button class="primary-button">Export</button></div>
-  <section class="kanban-board">
-    ` + kanbanColumn("Konsultasi", "5", "mint", []string{"Budi Santoso|Paket Profesional|Rina", "Siti Aisyah|Paket Basic|Dika", "Fajar Ramadhan|Layanan Satuan|Kevin"}) + `
-    ` + kanbanColumn("Persiapan Dokumen", "28", "rose", []string{"Dewi Lestari|Paket Profesional|Rina", "Andi Wijaya|Paket Basic|Dika", "Clara Monica|Paket Basic|Kevin"}) + `
-    ` + kanbanColumn("Apply / Proses", "26", "emerald", []string{"Ricky Pratama|Paket Profesional|Rina", "Kevin Santoso|Layanan Satuan|Sari", "Nabila Putri|Layanan Satuan|Kevin"}) + `
-    ` + kanbanColumn("LOA", "16", "sky", []string{"Jason Tanu|Paket Basic|Rina", "Michelle Chen|Layanan Satuan|Dika", "William K.|Paket Basic|Kevin"}) + `
-    ` + kanbanColumn("Visa", "20", "violet", []string{"Putri Amanda|Paket Profesional|Rina", "Natasha Lee|Paket Basic|Dika", "Budi Setyawan|Layanan Satuan|Sari"}) + `
-    ` + kanbanColumn("Keberangkatan", "9", "lime", []string{"Dimas Aditya|Paket Profesional|Kevin", "Yuan Zo|Paket Basic|Dika", "Siti Nurhaliza|Layanan Satuan|Rina"}) + `
-    ` + kanbanColumn("Selesai", "58", "amber", []string{"Budi Santoso|Paket Profesional|Rina", "Dewi Lestari|Paket Profesional|Rina", "Andi Wijaya|Paket Basic|Dika"}) + `
-  </section>
+  ` + pipelineToolbar(vm, "/owner/pipeline") + `
+  ` + pipelineColumns(vm) + `
 </div>`
 }
 
 func clientsPanel(vm dashboard.ViewModel, includeStaffFilter bool) string {
-	filter := `<button class="outline-button">Semua Paket</button><button class="outline-button">Semua Status</button>`
-	if includeStaffFilter {
-		filter += `<button class="outline-button">Semua Staff</button>`
+	path := "/" + vm.Role.String() + "/clients"
+	clients := filterClients(vm.Clients, vm.FilterStatus, vm.FilterPackage, vm.FilterPIC, vm.FilterSearch)
+
+	selectField := func(name, label string, options []string, selected string) string {
+		var opts strings.Builder
+		opts.WriteString(`<option value="">` + esc(label) + `</option>`)
+		for _, option := range options {
+			sel := ""
+			if option == selected {
+				sel = " selected"
+			}
+			opts.WriteString(`<option value="` + attr(option) + `"` + sel + `>` + esc(option) + `</option>`)
+		}
+		return `<select name="` + name + `" aria-label="` + attr(label) + `">` + opts.String() + `</select>`
 	}
+
+	filterFields := selectField("package", "Semua Paket", distinctClientValues(vm.Clients, func(c dashboard.ClientProfile) string { return c.PackageName }), vm.FilterPackage)
+	filterFields += selectField("status", "Semua Status", distinctClientValues(vm.Clients, func(c dashboard.ClientProfile) string { return c.Status }), vm.FilterStatus)
+	if includeStaffFilter {
+		filterFields += selectField("pic", "Semua Staff", distinctClientValues(vm.Clients, func(c dashboard.ClientProfile) string { return c.PICName }), vm.FilterPIC)
+	}
+
 	var rows strings.Builder
-	for i, client := range vm.Clients {
+	for i, client := range clients {
 		rows.WriteString(`<tr><td>` + intText(i+1) + `</td><td><strong>` + esc(client.Name) + `</strong><span>` + esc(client.Email) + `</span></td><td>` + esc(client.PackageName) + `</td><td>` + esc(client.PICName) + `</td><td>` + esc(client.Status) + `</td><td><span class="progress-line"><i style="width:` + percentStyle(client.Progress) + `"></i></span>` + intText(client.Progress) + `%</td><td>` + esc(client.LastSchedule) + `</td><td><a class="icon-action" href="/` + attr(vm.Role.String()) + `/chat" hx-get="/` + attr(vm.Role.String()) + `/chat" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Chat</a></td></tr>`)
 	}
 	if rows.Len() == 0 {
-		rows.WriteString(`<tr><td colspan="8">Belum ada client yang bisa ditampilkan.</td></tr>`)
+		rows.WriteString(`<tr><td colspan="8">Belum ada client yang cocok dengan filter ini.</td></tr>`)
 	}
 	return `
 <div class="panel table-panel">
-  <div class="toolbar-row mb-4"><label class="search-box wide">` + toolIconHTML("search") + `<input type="search" placeholder="Cari nama, email, atau WA" aria-label="Cari client"></label><div class="filter-group">` + filter + `<button class="primary-button">Export</button></div></div>
+  <form method="get" action="` + attr(path) + `" hx-get="` + attr(path) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true" class="toolbar-row mb-4"><label class="search-box wide">` + toolIconHTML("search") + `<input type="search" name="q" value="` + attr(vm.FilterSearch) + `" placeholder="Cari nama atau email" aria-label="Cari client"></label><div class="filter-group">` + filterFields + `<button class="outline-button" type="submit">Terapkan</button><a class="outline-button" href="` + attr(path) + `" hx-get="` + attr(path) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Reset</a><a class="primary-button" href="` + attr(path) + `/export">Export</a></div></form>
   <table class="data-table"><thead><tr><th>No.</th><th>Nama Klien</th><th>Paket / Layanan</th><th>PIC</th><th>Status Terakhir</th><th>Progress</th><th>Jadwal Terakhir</th><th>Aksi</th></tr></thead><tbody>
   ` + rows.String() + `</tbody></table>
-  <div class="pagination"><span>Menampilkan ` + intText(len(vm.Clients)) + ` data</span><div><button disabled>&lt;</button><button class="active">1</button><button disabled>&gt;</button></div></div>
+  <div class="pagination"><span>Menampilkan ` + intText(len(clients)) + ` dari ` + intText(len(vm.Clients)) + ` data</span><div><button disabled>&lt;</button><button class="active">1</button><button disabled>&gt;</button></div></div>
 </div>`
 }
 
-func ownerServices() string {
-	return `
-<div class="grid gap-5 xl:grid-cols-3">
-  <article class="panel service-card"><span class="service-badge bg-violet-100 text-violet-700">Paket</span><h2>Paket Profesional</h2><p>Full cover untuk universitas, dokumen, visa, dan keberangkatan.</p><strong>Rp 25.000.000</strong><ul><li>28 client dalam proses</li><li>Margin sehat 38%</li><li>Checklist lengkap</li></ul></article>
-  <article class="panel service-card"><span class="service-badge bg-blue-100 text-blue-700">Paket</span><h2>Paket Basic</h2><p>Pendampingan inti untuk dokumen dan aplikasi kampus.</p><strong>Rp 15.000.000</strong><ul><li>31 client dalam proses</li><li>Margin sehat 32%</li><li>Dokumen prioritas</li></ul></article>
-  <article class="panel service-card"><span class="service-badge bg-amber-100 text-amber-700">Satuan</span><h2>Layanan Satuan</h2><p>Visa, legalisir, translate, TOEFL, medical, dan apply terpisah.</p><strong>Mulai Rp 450.000</strong><ul><li>72 order dalam proses</li><li>Perlu tracking bukti</li><li>Approval fleksibel</li></ul></article>
-</div>`
+func distinctClientValues(clients []dashboard.ClientProfile, selector func(dashboard.ClientProfile) string) []string {
+	seen := make(map[string]bool)
+	var values []string
+	for _, client := range clients {
+		value := selector(client)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		values = append(values, value)
+	}
+	sort.Strings(values)
+	return values
+}
+
+func filterClients(clients []dashboard.ClientProfile, status, packageName, pic, search string) []dashboard.ClientProfile {
+	search = strings.ToLower(strings.TrimSpace(search))
+	filtered := make([]dashboard.ClientProfile, 0, len(clients))
+	for _, client := range clients {
+		if status != "" && client.Status != status {
+			continue
+		}
+		if packageName != "" && client.PackageName != packageName {
+			continue
+		}
+		if pic != "" && client.PICName != pic {
+			continue
+		}
+		if search != "" && !strings.Contains(strings.ToLower(client.Name), search) && !strings.Contains(strings.ToLower(client.Email), search) {
+			continue
+		}
+		filtered = append(filtered, client)
+	}
+	return filtered
+}
+
+// ownerServices renders the price list from vm.ServicePackages — owner-editable
+// catalog data — instead of three hardcoded cards with made-up numbers. Client
+// counts and revenue per package are computed live from vm.Clients/vm.Orders,
+// so the stats shown are real, not decorative.
+func ownerServices(vm dashboard.ViewModel) string {
+	toggleLabel := "Kelola Paket"
+	toggleTarget := "/owner/services?manage=1"
+	if vm.ShowStageManager {
+		toggleLabel = "Tutup Pengaturan Paket"
+		toggleTarget = "/owner/services"
+	}
+	toolbar := `<div class="toolbar-row"><div><h2 class="text-lg font-semibold">Paket &amp; Layanan</h2><p class="text-sm text-slate-500">Daftar harga dikelola sendiri lewat "Kelola Paket" — bukan hardcode.</p></div><div class="toolbar-actions"><a class="outline-button" href="` + attr(toggleTarget) + `" hx-get="` + attr(toggleTarget) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">` + toolIconHTML("settings-slider") + ` ` + toggleLabel + `</a></div></div>`
+	managePanel := ""
+	if vm.ShowStageManager {
+		managePanel = packageManagerPanel(vm.ServicePackages)
+	}
+
+	var cards strings.Builder
+	if len(vm.ServicePackages) == 0 {
+		cards.WriteString(`<p class="empty-note">Belum ada paket. Klik "Kelola Paket" untuk menambahkan.</p>`)
+	}
+	for i, pkg := range vm.ServicePackages {
+		bg, text := serviceBadgeTone(i)
+		category := pkg.Category
+		if category == "" {
+			category = "Paket"
+		}
+		priceLabel := money(pkg.Price)
+		if pkg.PriceIsFrom {
+			priceLabel = "Mulai " + priceLabel
+		}
+		inProgress, revenue, orders := packageStats(vm, pkg.Name)
+		var items strings.Builder
+		items.WriteString(`<li>` + intText(inProgress) + ` client dalam proses</li>`)
+		items.WriteString(`<li>` + intText(orders) + ` order tercatat &middot; ` + money(revenue) + ` pendapatan lunas</li>`)
+		for _, line := range strings.Split(pkg.Highlights, "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				items.WriteString(`<li>` + esc(line) + `</li>`)
+			}
+		}
+		cards.WriteString(`<article class="panel service-card"><span class="service-badge ` + bg + ` ` + text + `">` + esc(category) + `</span><h2>` + esc(pkg.Name) + `</h2><p>` + esc(pkg.Description) + `</p><strong>` + priceLabel + `</strong><ul>` + items.String() + `</ul></article>`)
+	}
+
+	return `<div class="space-y-5">` + toolbar + managePanel + `<div class="grid gap-5 xl:grid-cols-3">` + cards.String() + `</div></div>`
+}
+
+func serviceBadgeTone(position int) (string, string) {
+	palette := [][2]string{
+		{"bg-violet-100", "text-violet-700"},
+		{"bg-blue-100", "text-blue-700"},
+		{"bg-amber-100", "text-amber-700"},
+		{"bg-emerald-100", "text-emerald-700"},
+		{"bg-rose-100", "text-rose-700"},
+		{"bg-sky-100", "text-sky-700"},
+	}
+	pair := palette[position%len(palette)]
+	return pair[0], pair[1]
+}
+
+// packageStats computes real, live numbers from already-loaded client/order
+// data instead of the placeholder counts the static cards used to show.
+func packageStats(vm dashboard.ViewModel, packageName string) (inProgress int, revenue int64, orders int) {
+	for _, client := range vm.Clients {
+		if client.PackageName == packageName && client.Progress < 100 {
+			inProgress++
+		}
+	}
+	for _, order := range vm.Orders {
+		if order.PackageName != packageName {
+			continue
+		}
+		orders++
+		if order.Status == dashboard.OrderPaid {
+			revenue += order.Paid
+		}
+	}
+	return
+}
+
+// packageManagerPanel lets the owner add, edit, reorder, or delete packages
+// themselves — the price list changes with the business, not with a code deploy.
+func packageManagerPanel(packages []dashboard.ServicePackage) string {
+	var rows strings.Builder
+	for i, pkg := range packages {
+		upAttr := ""
+		if i == 0 {
+			upAttr = " disabled"
+		}
+		downAttr := ""
+		if i == len(packages)-1 {
+			downAttr = " disabled"
+		}
+		checked := ""
+		if pkg.PriceIsFrom {
+			checked = " checked"
+		}
+		confirmMsg := "Hapus paket \"" + pkg.Name + "\"? Data client/order yang sudah memakai nama paket ini tidak akan berubah."
+		rows.WriteString(`<div class="package-manager-row">`)
+		rows.WriteString(`<form method="post" action="/owner/services/` + attr(pkg.ID) + `/update" class="package-edit-form">`)
+		rows.WriteString(`<div class="package-edit-grid">`)
+		rows.WriteString(`<label>Nama<input name="name" value="` + attr(pkg.Name) + `" required maxlength="120"></label>`)
+		rows.WriteString(`<label>Kategori<input name="category" value="` + attr(pkg.Category) + `" maxlength="60" placeholder="Paket / Satuan"></label>`)
+		rows.WriteString(`<label>Harga (Rp)<input name="price" type="number" min="0" value="` + intText(int(pkg.Price)) + `" required></label>`)
+		rows.WriteString(`<label class="checkbox-label"><input type="checkbox" name="price_is_from" value="1"` + checked + `> Harga mulai dari</label>`)
+		rows.WriteString(`</div>`)
+		rows.WriteString(`<label>Deskripsi<textarea name="description" rows="2" maxlength="300">` + esc(pkg.Description) + `</textarea></label>`)
+		rows.WriteString(`<label>Highlight (satu baris = satu poin)<textarea name="highlights" rows="2" maxlength="300">` + esc(pkg.Highlights) + `</textarea></label>`)
+		rows.WriteString(`<div class="package-edit-actions"><button class="primary-button small" type="submit">Simpan</button></div>`)
+		rows.WriteString(`</form>`)
+		rows.WriteString(`<div class="stage-manager-actions">`)
+		rows.WriteString(`<form method="post" action="/owner/services/` + attr(pkg.ID) + `/move" class="inline-form"><input type="hidden" name="direction" value="up"><button type="submit"` + upAttr + ` title="Naikkan urutan" aria-label="Naikkan urutan">` + svgIcon("arrow-up") + `</button></form>`)
+		rows.WriteString(`<form method="post" action="/owner/services/` + attr(pkg.ID) + `/move" class="inline-form"><input type="hidden" name="direction" value="down"><button type="submit"` + downAttr + ` title="Turunkan urutan" aria-label="Turunkan urutan">` + svgIcon("arrow-down") + `</button></form>`)
+		rows.WriteString(`<form method="post" action="/owner/services/` + attr(pkg.ID) + `/delete" class="inline-form" data-confirm="` + attr(confirmMsg) + `"><button type="submit" class="stage-delete" title="Hapus paket" aria-label="Hapus paket">` + svgIcon("close") + `</button></form>`)
+		rows.WriteString(`</div></div>`)
+	}
+	if rows.Len() == 0 {
+		rows.WriteString(`<p class="empty-note">Belum ada paket. Tambahkan paket pertama di bawah.</p>`)
+	}
+	addForm := `<form method="post" action="/owner/services/create" class="package-edit-form mt-2"><div class="package-edit-grid"><label>Nama<input name="name" required maxlength="120" placeholder="Contoh: Paket Express"></label><label>Kategori<input name="category" maxlength="60" placeholder="Paket / Satuan"></label><label>Harga (Rp)<input name="price" type="number" min="0" required placeholder="15000000"></label><label class="checkbox-label"><input type="checkbox" name="price_is_from" value="1"> Harga mulai dari</label></div><label>Deskripsi<textarea name="description" rows="2" maxlength="300" placeholder="Ringkasan paket"></textarea></label><label>Highlight (satu baris = satu poin)<textarea name="highlights" rows="2" maxlength="300" placeholder="Contoh: Prioritas review dokumen"></textarea></label><div class="package-edit-actions"><button class="primary-button" type="submit">+ Tambah Paket</button></div></form>`
+	return `<div class="panel stage-manager"><h3 class="text-sm font-semibold mb-1">Kelola Paket &amp; Layanan</h3><p class="text-xs text-slate-500 mb-3">Tambah, ubah, urutkan, atau hapus paket sesuai kebutuhan bisnis kamu — tidak perlu ubah kode program.</p>` + rows.String() + addForm + `</div>`
 }
 
 func ownerInvoices(vm dashboard.ViewModel) string {
+	if len(vm.Orders) == 0 {
+		return `<div class="panel empty-state"><span>Invoice</span><h2>Belum ada invoice</h2><p>Invoice akan muncul di sini setelah owner atau staff membuat order untuk client.</p></div>`
+	}
+
+	filter := vm.InvoiceFilter
+	filterLink := func(label, value string, count int) string {
+		className := ""
+		if filter == value {
+			className = ` class="active"`
+		}
+		href := "/owner/invoices"
+		if value != "" {
+			href += "?filter=" + value
+		}
+		return `<a` + className + ` href="` + attr(href) + `" hx-get="` + attr(href) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">` + esc(label) + ` <span>` + intText(count) + `</span></a>`
+	}
 	var side strings.Builder
-	side.WriteString(`<button class="active">Belum Dibayar <span>` + intText(countOpenOrders(vm.Orders)) + `</span></button>`)
-	side.WriteString(`<button>Menunggu Verifikasi <span>` + intText(countWaitingOrders(vm.Orders)) + `</span></button>`)
-	side.WriteString(`<button>Lunas <span>` + intText(countPaidOrders(vm.Orders)) + `</span></button>`)
-	active := firstOrder(vm.Orders)
+	side.WriteString(filterLink("Semua", "", len(vm.Orders)))
+	side.WriteString(filterLink("Belum Dibayar", "unpaid", len(filterOrdersByStatus(vm.Orders, "unpaid"))))
+	side.WriteString(filterLink("Menunggu Verifikasi", "waiting", len(filterOrdersByStatus(vm.Orders, "waiting"))))
+	side.WriteString(filterLink("Lunas", "paid", len(filterOrdersByStatus(vm.Orders, "paid"))))
+
+	filtered := filterOrdersByStatus(vm.Orders, filter)
+	pickFrom := filtered
+	if len(pickFrom) == 0 {
+		pickFrom = vm.Orders
+	}
+	active := selectOrder(pickFrom, vm.ActiveOrderCode)
+
+	var invoiceList strings.Builder
+	for _, order := range filtered {
+		className := ""
+		if order.Code == active.Code {
+			className = ` class="active"`
+		}
+		href := "/owner/invoices?order=" + url.QueryEscape(order.Code)
+		if filter != "" {
+			href += "&filter=" + url.QueryEscape(filter)
+		}
+		invoiceList.WriteString(`<a` + className + ` href="` + attr(href) + `" hx-get="` + attr(href) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true"><strong>` + esc(order.ClientName) + `</strong><span>` + esc(order.Code) + ` &middot; ` + esc(orderStatusLabel(order.Status)) + `</span><strong>` + money(order.Total) + `</strong></a>`)
+	}
+	if invoiceList.Len() == 0 {
+		invoiceList.WriteString(`<p class="empty-note">Tidak ada invoice pada filter ini.</p>`)
+	}
+
 	proofDetail := `<div><span>Belum ada bukti pembayaran</span><strong>-</strong></div>`
 	if active.ProofFileName != "" || active.ProofNote != "" {
 		fileName := active.ProofFileName
@@ -408,23 +630,101 @@ func ownerInvoices(vm dashboard.ViewModel) string {
 		proofDetail = `<div><span>Bukti Pembayaran</span><strong>` + esc(fileName) + `</strong></div><div><span>Catatan Transfer</span><strong>` + esc(note) + `</strong></div>`
 	}
 	statusClass := orderStatusClass(active.Status)
+	client := findClientByID(vm.Clients, active.ClientID)
+	waHref := waLink(client.Phone, "Halo "+active.ClientName+", ini invoice "+active.Code+" sebesar "+money(active.Total)+" dari Taiwan Education Consulting.")
+	mailHref := mailtoLink(client.Email, "Invoice "+active.Code, "Halo "+active.ClientName+",\n\nBerikut invoice "+active.Code+" sebesar "+money(active.Total)+".\n\nTerima kasih.")
+	pdfHref := "/owner/invoices/" + url.QueryEscape(active.Code) + "/invoice.pdf"
+	commActions := `<div class="action-stack"><a class="success-button" href="` + attr(waHref) + `" target="_blank" rel="noopener">Kirim Invoice (WA)</a><a class="primary-button" href="` + attr(mailHref) + `">Kirim Invoice (Email)</a><a class="outline-button" href="` + attr(pdfHref) + `">Download PDF</a></div>`
+
+	var statusAction string
+	switch active.Status {
+	case dashboard.OrderPaid:
+		statusAction = `<div class="invoice-status-note is-paid"><strong>Invoice sudah lunas</strong><p>Pembayaran sudah tercatat penuh di sistem.</p></div>`
+	case dashboard.OrderWaitingVerification:
+		statusAction = `<div class="invoice-status-note"><strong>Menunggu verifikasi</strong><p>Client sudah mengirim bukti transfer. Cek bukti pembayaran di samping, lalu konfirmasi jika sudah sesuai.</p><form method="post" action="/owner/orders/mark-paid"><input type="hidden" name="order_code" value="` + attr(active.Code) + `"><button class="success-button" type="submit">Verifikasi &amp; Tandai Lunas</button></form></div>`
+	default:
+		statusAction = `<div class="invoice-status-note"><strong>Belum ada pembayaran</strong><p>Jika client sudah transfer manual di luar sistem, tandai lunas di sini.</p><form method="post" action="/owner/orders/mark-paid"><input type="hidden" name="order_code" value="` + attr(active.Code) + `"><button class="outline-button" type="submit">Tandai Lunas Manual</button></form></div>`
+	}
+
 	return `
 <div class="grid gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">
-  <aside class="panel"><h2 class="mb-4 text-base font-semibold">Semua Invoice</h2><div class="side-filter">` + side.String() + `</div><form method="post" action="/owner/orders/mark-paid" class="code-form mt-5"><label>Kode Pesanan</label><input name="order_code" value="` + attr(active.Code) + `" placeholder="ORD-2026-0102" required><button class="primary-button" type="submit">Tandai Lunas</button></form></aside>
+  <aside class="panel"><h2 class="mb-1 text-base font-semibold">Semua Invoice</h2><p class="text-sm text-slate-500 mb-4">Klik salah satu invoice untuk lihat detail dan tindak lanjut.</p><div class="side-filter">` + side.String() + `</div><div class="invoice-list mt-4">` + invoiceList.String() + `</div></aside>
   <section class="panel">
-    <div class="invoice-head"><div><p>Invoice <strong>#` + esc(active.Code) + `</strong></p><span>` + esc(orderStatusLabel(active.Status)) + `</span></div><div><p>Jatuh Tempo</p><strong>` + esc(dateLabel(active.DueDate)) + `</strong></div></div>
+    <div class="invoice-head"><div><p>Invoice <strong>#` + esc(active.Code) + `</strong></p><span>` + esc(active.ClientName) + ` &middot; ` + esc(active.PackageName) + `</span></div><div><p>Jatuh Tempo</p><strong>` + esc(dateLabel(active.DueDate)) + `</strong></div></div>
     <div class="invoice-layout">
       <div><dl class="detail-grid"><div><dt>Nama Klien</dt><dd>` + esc(active.ClientName) + `</dd></div><div><dt>Paket / Layanan</dt><dd>` + esc(active.PackageName) + `</dd></div><div><dt>Kode Pesanan</dt><dd>` + esc(active.Code) + `</dd></div><div><dt>Total Tagihan</dt><dd>` + money(active.Total) + `</dd></div><div><dt>Status Pembayaran</dt><dd><span class="status ` + statusClass + `">` + esc(orderStatusLabel(active.Status)) + `</span></dd></div></dl><div class="invoice-box"><h3>Rincian Tagihan</h3><div><span>` + esc(active.PackageName) + `</span><strong>` + money(active.Total) + `</strong></div><div><span>Sudah Dibayar</span><strong>` + money(active.Paid) + `</strong></div><div class="total"><span>Sisa</span><strong>` + money(active.Total-active.Paid) + `</strong></div></div><div class="invoice-box"><h3>Bukti Pembayaran</h3>` + proofDetail + `</div></div>
-      <div class="action-stack"><button class="success-button" type="button">Kirim Invoice (WA)</button><button class="primary-button" type="button">Kirim Invoice (Email)</button><button class="outline-button" type="button">Download PDF</button><form method="post" action="/owner/orders/mark-paid"><input type="hidden" name="order_code" value="` + attr(active.Code) + `"><button class="outline-button" type="submit">Tandai Lunas</button></form></div>
+      <div class="invoice-rail">` + statusAction + commActions + `</div>
     </div>
   </section>
 </div>`
 }
 
+func filterOrdersByStatus(orders []dashboard.Order, filter string) []dashboard.Order {
+	if filter == "" {
+		return orders
+	}
+	var status dashboard.OrderStatus
+	switch filter {
+	case "unpaid":
+		status = dashboard.OrderUnpaid
+	case "waiting":
+		status = dashboard.OrderWaitingVerification
+	case "paid":
+		status = dashboard.OrderPaid
+	default:
+		return orders
+	}
+	filtered := make([]dashboard.Order, 0, len(orders))
+	for _, order := range orders {
+		if order.Status == status {
+			filtered = append(filtered, order)
+		}
+	}
+	return filtered
+}
+
+func selectOrder(orders []dashboard.Order, code string) dashboard.Order {
+	if code != "" {
+		for _, order := range orders {
+			if strings.EqualFold(order.Code, code) {
+				return order
+			}
+		}
+	}
+	return firstOrder(orders)
+}
+
+func findClientByID(clients []dashboard.ClientProfile, id string) dashboard.ClientProfile {
+	for _, client := range clients {
+		if client.ID == id {
+			return client
+		}
+	}
+	return dashboard.ClientProfile{}
+}
+
+func waLink(phone, message string) string {
+	digits := make([]byte, 0, len(phone))
+	for i := 0; i < len(phone); i++ {
+		if phone[i] >= '0' && phone[i] <= '9' {
+			digits = append(digits, phone[i])
+		}
+	}
+	number := string(digits)
+	if strings.HasPrefix(number, "0") {
+		number = "62" + number[1:]
+	}
+	return "https://wa.me/" + number + "?text=" + url.QueryEscape(message)
+}
+
+func mailtoLink(email, subject, body string) string {
+	return "mailto:" + email + "?subject=" + url.QueryEscape(subject) + "&body=" + url.QueryEscape(body)
+}
+
 func ownerReports(vm dashboard.ViewModel) string {
 	return `
 <div class="space-y-5">
-  <div class="toolbar-row"><div class="tabs"><button class="tab-active">Omzet</button><button>Profit</button><button>Pemasukan</button><button>Pengeluaran</button><button>Piutang</button></div><div class="toolbar-actions"><button class="outline-button">Tahun Ini</button><button class="primary-button">Export</button></div></div>
+  <div class="toolbar-row"><div class="tabs"><span class="tab-active">Omzet</span><span>Profit</span><span>Pemasukan</span><span>Pengeluaran</span><span>Piutang</span></div><div class="toolbar-actions"><span class="date-pill">Tahun ` + intText(time.Now().Year()) + `</span><a class="primary-button" href="/owner/reports/export">Export</a></div></div>
   <section class="grid gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,.8fr)]">
     <div class="panel"><div class="panel-head"><h2>Grafik Omzet (Tahun 2026)</h2></div><div class="monthly-chart"><i class="h-20"></i><i class="h-24"></i><i class="h-32"></i><i class="h-40"></i><i class="h-48"></i><i class="h-56"></i><i class="h-40"></i><i class="h-44"></i><i class="h-36"></i><i class="h-32"></i><i class="h-28"></i><i class="h-24"></i></div><div class="month-labels"><span>Jan</span><span>Feb</span><span>Mar</span><span>Apr</span><span>Mei</span><span>Jun</span><span>Jul</span><span>Agu</span><span>Sep</span><span>Okt</span><span>Nov</span><span>Des</span></div></div>
     <div class="panel"><div class="panel-head"><h2>Ringkasan Omzet</h2></div><div class="summary-list"><div><span>Total Omzet Lunas</span><strong>` + money(vm.Snapshot.Revenue) + `</strong></div><div><span>Total Pengeluaran</span><strong>` + money(vm.Snapshot.Expenses) + `</strong></div><div><span>Profit</span><strong>` + money(vm.Snapshot.Profit) + `</strong></div><div><span>Piutang</span><strong>` + money(unpaidAmount(vm.Orders)) + `</strong></div></div></div>
@@ -445,11 +745,11 @@ func staffDashboard(vm dashboard.ViewModel) string {
   </section>
   <section class="grid gap-5 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1.6fr)_minmax(0,.85fr)]">
     <div class="panel border-0 shadow-none"><div class="panel-head"><h2>Tugas Hari Ini</h2><a href="/staff/tasks" hx-get="/staff/tasks" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Semua</a></div>` + taskListCompact(vm.Tasks) + `<a class="link-row" href="/staff/tasks" hx-get="/staff/tasks" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Semua Tugas</a></div>
-    <div class="panel border-0 shadow-none"><div class="panel-head"><h2>Pipeline Saya</h2><a href="/staff/pipeline" hx-get="/staff/pipeline" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Semua</a></div><div class="mini-kanban">` + miniPipeline() + `</div></div>
-    <div class="right-rail"><div class="panel border-0 shadow-none"><div class="panel-head"><h2>Pengingat</h2><a href="#">Lihat Semua</a></div><ul class="reminder-list clean"><li>3 appointment kedutaan minggu ini</li><li>5 dokumen menunggu review</li><li>2 pengeluaran menunggu dicatat</li><li>4 dokumen akan kedaluwarsa</li><li>1 jadwal interview besok</li></ul></div>` + quickSchedule() + recentDocs() + `</div>
+    <div class="panel border-0 shadow-none"><div class="panel-head"><h2>Pipeline Saya</h2><a href="/staff/pipeline" hx-get="/staff/pipeline" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Semua</a></div><div class="mini-kanban">` + pipelineColumns(vm) + `</div></div>
+    <div class="right-rail"><div class="panel border-0 shadow-none"><div class="panel-head"><h2>Pengingat</h2><a href="/staff/tasks" hx-get="/staff/tasks" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Semua</a></div>` + staffReminderList(vm) + `</div>` + quickSchedule(vm) + recentDocs(vm) + `</div>
   </section>
   <section class="panel border-0 shadow-none">
-    <div class="toolbar-row mb-4"><div><h2 class="text-lg font-semibold">Pengeluaran Operasional</h2><p class="text-sm text-slate-500">Catat biaya pengeluaran untuk setiap berkas atau keperluan klien.</p></div><button class="dark-button">+ Catat Pengeluaran</button></div>
+    <div class="toolbar-row mb-4"><div><h2 class="text-lg font-semibold">Pengeluaran Operasional</h2><p class="text-sm text-slate-500">Catat biaya pengeluaran untuk setiap berkas atau keperluan klien.</p></div><a class="dark-button" href="/staff/expenses?new=1" hx-get="/staff/expenses?new=1" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">+ Catat Pengeluaran</a></div>
     ` + expensesTable(vm.Expenses) + `
   </section>
 </div>`
@@ -459,8 +759,46 @@ func staffClients(vm dashboard.ViewModel) string {
 	return `<div class="space-y-5"><section class="metric-grid metric-grid-four"><article class="metric-card"><p>Klien Aktif</p><strong>` + intText(len(vm.Clients)) + `</strong><span class="trend-up">Dalam akses staff</span></article><article class="metric-card"><p>Butuh Follow Up</p><strong>` + intText(countOpenTasks(vm.Tasks)) + `</strong><span class="text-amber-600">Prioritas</span></article><article class="metric-card"><p>Dokumen Review</p><strong>` + intText(countReviewDocs(vm.Documents)) + `</strong><span class="text-red-600">Harus dicek</span></article><article class="metric-card"><p>Selesai Bulan Ini</p><strong>` + intText(countPaidOrders(vm.Orders)) + `</strong><span class="trend-up">Order lunas</span></article></section>` + clientsPanel(vm, false) + `</div>`
 }
 
-func staffPipeline() string {
-	return `<div class="panel border-0 shadow-none"><div class="mini-kanban large">` + miniPipeline() + `</div></div>`
+func staffPipeline(vm dashboard.ViewModel) string {
+	return `<div class="space-y-5">
+  ` + pipelineToolbar(vm, "/staff/pipeline") + `
+  <div class="panel border-0 shadow-none"><div class="mini-kanban large">` + pipelineColumns(vm) + `</div></div>
+</div>`
+}
+
+// pipelineToolbar renders the header row above the kanban board, including
+// the "Kelola Tahap" toggle that reveals stageManagerPanel — the entry point
+// for owners/staff to define pipeline stages themselves instead of relying on
+// a fixed set baked into the code.
+func pipelineToolbar(vm dashboard.ViewModel, basePath string) string {
+	toggleLabel := "Kelola Tahap"
+	toggleTarget := basePath + "?manage=1"
+	if vm.ShowStageManager {
+		toggleLabel = "Tutup Pengaturan Tahap"
+		toggleTarget = basePath
+	}
+	exportPath := "/" + vm.Role.String() + "/clients/export"
+	toolbar := `<div class="toolbar-row"><div><h2 class="text-lg font-semibold">Pipeline Keseluruhan</h2><p class="text-sm text-slate-500">Tahap pipeline dikonfigurasi manual lewat "Kelola Tahap" — bukan hardcode, jadi bisa disesuaikan kapan saja.</p></div><div class="toolbar-actions"><a class="outline-button" href="` + attr(toggleTarget) + `" hx-get="` + attr(toggleTarget) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">` + toolIconHTML("settings-slider") + ` ` + toggleLabel + `</a><a class="primary-button" href="` + attr(exportPath) + `">Export</a></div></div>`
+	if vm.ShowStageManager {
+		toolbar += stageManagerPanel(vm.PipelineStages)
+	}
+	return toolbar
+}
+
+func clientSelectOptions(clients []dashboard.ClientProfile) string {
+	var opts strings.Builder
+	for _, client := range clients {
+		opts.WriteString(`<option value="` + attr(client.ID) + `">` + esc(client.Name) + `</option>`)
+	}
+	return opts.String()
+}
+
+func toggleFormButton(showForm bool, label, basePath string) string {
+	if showForm {
+		return `<a class="outline-button" href="` + attr(basePath) + `" hx-get="` + attr(basePath) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Batal</a>`
+	}
+	newPath := basePath + "?new=1"
+	return `<a class="primary-button" href="` + attr(newPath) + `" hx-get="` + attr(newPath) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">` + esc(label) + `</a>`
 }
 
 func staffTasks(vm dashboard.ViewModel) string {
@@ -472,7 +810,11 @@ func staffTasks(vm dashboard.ViewModel) string {
 		}
 		rows.WriteString(`<tr><td>` + esc(task.TimeLabel) + `</td><td>` + esc(task.Title) + `</td><td>` + esc(task.ClientName) + `</td><td><span class="status ` + priorityClass(task.Priority) + `">` + esc(task.Priority) + `</span></td><td><span class="status ` + taskStatusClass(task.Status) + `">` + esc(taskStatusLabel(task.Status)) + `</span></td><td>` + action + `</td></tr>`)
 	}
-	return `<div class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,.45fr)]"><div class="panel table-panel"><div class="panel-head"><h2>Task & To Do List</h2><button class="primary-button" type="button">Tambah Task</button></div><table class="data-table"><thead><tr><th>Waktu</th><th>Tugas</th><th>Klien</th><th>Prioritas</th><th>Status</th><th>Aksi</th></tr></thead><tbody>` + rows.String() + `</tbody></table></div><div class="right-rail">` + quickSchedule() + recentDocs() + `</div></div>`
+	form := ""
+	if vm.ShowCreateForm {
+		form = `<form method="post" action="/staff/tasks/create" class="student-upload-form"><label>Client<select name="client_id" required><option value="">Pilih client</option>` + clientSelectOptions(vm.Clients) + `</select></label><label>Judul Tugas<input name="title" required placeholder="Contoh: Follow up dokumen"></label><label>Waktu<input name="time_label" placeholder="10:00"></label><label>Prioritas<select name="priority"><option>Rendah</option><option selected>Sedang</option><option>Tinggi</option></select></label><button class="primary-button" type="submit">Simpan Task</button></form>`
+	}
+	return `<div class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,.45fr)]"><div class="panel table-panel"><div class="panel-head"><h2>Task & To Do List</h2>` + toggleFormButton(vm.ShowCreateForm, "Tambah Task", "/staff/tasks") + `</div>` + form + `<table class="data-table"><thead><tr><th>Waktu</th><th>Tugas</th><th>Klien</th><th>Prioritas</th><th>Status</th><th>Aksi</th></tr></thead><tbody>` + rows.String() + `</tbody></table></div><div class="right-rail">` + quickSchedule(vm) + recentDocs(vm) + `</div></div>`
 }
 
 func staffDocuments(vm dashboard.ViewModel) string {
@@ -480,7 +822,11 @@ func staffDocuments(vm dashboard.ViewModel) string {
 }
 
 func staffExpenses(vm dashboard.ViewModel) string {
-	return `<div class="panel"><div class="toolbar-row mb-4"><div><h2 class="text-lg font-semibold">Pengeluaran Operasional</h2><p class="text-sm text-slate-500">Input kategori, nominal, bukti, dan keterangan untuk owner approval.</p></div><button class="dark-button" type="button">+ Catat Pengeluaran</button></div>` + expensesTable(vm.Expenses) + `</div>`
+	form := ""
+	if vm.ShowCreateForm {
+		form = `<form method="post" action="/staff/expenses/create" enctype="multipart/form-data" class="student-upload-form"><label>Client<select name="client_id" required><option value="">Pilih client</option>` + clientSelectOptions(vm.Clients) + `</select></label><label>Keperluan / Berkas<input name="need" required placeholder="Contoh: Translate ijazah"></label><label>Kategori<input name="category" placeholder="Translate, Legalisir, Medical, dll"></label><label>Nominal (IDR)<input name="amount" type="number" min="1" required placeholder="450000"></label><label>Tanggal<input name="date_label" placeholder="25/06/2026"></label><label>Keterangan<input name="description" placeholder="Catatan tambahan"></label><label>Bukti pengeluaran<input name="receipt_file" type="file"></label><button class="primary-button" type="submit">Simpan Pengeluaran</button></form>`
+	}
+	return `<div class="panel"><div class="toolbar-row mb-4"><div><h2 class="text-lg font-semibold">Pengeluaran Operasional</h2><p class="text-sm text-slate-500">Input kategori, nominal, bukti, dan keterangan untuk owner approval.</p></div>` + toggleFormButton(vm.ShowCreateForm, "+ Catat Pengeluaran", "/staff/expenses") + `</div>` + form + expensesTable(vm.Expenses) + `</div>`
 }
 
 func studentDashboard(vm dashboard.ViewModel) string {
@@ -502,7 +848,7 @@ func studentDashboard(vm dashboard.ViewModel) string {
   <section class="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,.9fr)_minmax(0,.8fr)]">
     <div class="panel student-hero"><span class="service-badge bg-emerald-100 text-emerald-700">` + esc(client.PackageName) + `</span><h2>` + esc(client.Name) + `</h2><p>` + esc(client.Campus) + `</p><div class="student-progress"><strong>` + intText(client.Progress) + `%</strong><span>` + esc(client.CurrentStage) + `</span></div></div>
     <div class="panel"><div class="panel-head"><h2>Progress Keseluruhan</h2><a href="/student/progress" hx-get="/student/progress" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Detail</a></div><div class="progress-ring" style="` + progressRingStyle(client.Progress) + `"><span>` + intText(client.Progress) + `%</span></div><p class="mt-4 text-sm text-slate-500">Tahap saat ini: ` + esc(client.CurrentStage) + `. ` + intText(countDoneStages(vm.ProgressStages)) + ` dari ` + intText(len(vm.ProgressStages)) + ` tahap selesai.</p></div>
-    <div class="panel"><div class="panel-head"><h2>Konsultan</h2></div><div class="consultant-card"><span class="avatar-mini bg-emerald-100 text-emerald-700">` + initials(client.PICName) + `</span><div><strong>` + esc(client.PICName) + `</strong><p>Staff Konsultan</p></div></div><div class="action-grid">` + chatAction + `<button class="outline-button" type="button">Email</button></div></div>
+    <div class="panel"><div class="panel-head"><h2>Konsultan</h2></div><div class="consultant-card"><span class="avatar-mini bg-emerald-100 text-emerald-700">` + initials(client.PICName) + `</span><div><strong>` + esc(client.PICName) + `</strong><p>Staff Konsultan</p></div></div><div class="action-grid">` + chatAction + `</div></div>
   </section>
   <section class="metric-grid metric-grid-four">
     <article class="metric-card"><div><p>Total Tagihan</p><strong>` + money(total) + `</strong><span>Semua invoice milik kamu</span></div></article>
@@ -555,15 +901,16 @@ func studentPayments(vm dashboard.ViewModel) string {
 	if len(vm.Orders) == 0 {
 		return `<div class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,.75fr)]"><section class="panel empty-state"><span>Invoice</span><h2>Belum ada invoice aktif</h2><p>Pembayaran akan muncul setelah owner atau staff mengonfirmasi paket dan membuat kode pesanan kamu.</p></section><aside class="panel"><div class="panel-head"><h2>Status Pembayaran</h2></div><div class="summary-list compact"><div><span>Total Tagihan</span><strong>Rp 0</strong></div><div><span>Sudah Dibayar</span><strong>Rp 0</strong></div><div><span>Sisa Tagihan</span><strong>Rp 0</strong></div></div></aside></div>`
 	}
+	active := selectOrder(vm.Orders, vm.ActiveOrderCode)
 	var invoiceList strings.Builder
-	for i, order := range vm.Orders {
+	for _, order := range vm.Orders {
 		className := ""
-		if i == 0 {
+		if order.Code == active.Code {
 			className = ` class="active"`
 		}
-		invoiceList.WriteString(`<button` + className + ` type="button">` + esc(order.Code) + ` <span>` + esc(orderStatusLabel(order.Status)) + `</span><strong>` + money(order.Total) + `</strong></button>`)
+		href := "/student/payments?order=" + url.QueryEscape(order.Code)
+		invoiceList.WriteString(`<a` + className + ` href="` + attr(href) + `" hx-get="` + attr(href) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">` + esc(order.Code) + ` <span>` + esc(orderStatusLabel(order.Status)) + `</span><strong>` + money(order.Total) + `</strong></a>`)
 	}
-	active := firstOrder(vm.Orders)
 	remaining := active.Total - active.Paid
 	if remaining < 0 {
 		remaining = 0
@@ -585,8 +932,19 @@ func settingsPanel(role string, includeFinance bool) string {
 	return `<div class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,.8fr)]"><div class="panel"><h2 class="mb-4 text-lg font-semibold">Preferensi ` + esc(role) + `</h2><div class="settings-list"><div><span>Autentikasi</span><strong>Password + session aman</strong><em>Aktif</em></div><div><span>Notifikasi</span><strong>Email dan WhatsApp reminder</strong><em>Aktif</em></div><div><span>PWA</span><strong>Installable di Android</strong><em>Aktif</em></div>` + finance + `<div><span>SEO</span><strong>Metadata per halaman</strong><em>Aktif</em></div></div></div><div class="panel"><h2 class="mb-4 text-lg font-semibold">Keamanan</h2><p class="text-sm leading-6 text-slate-600">Aplikasi menggunakan security headers, konfigurasi via environment, timeout server, dan graceful shutdown. Hak akses disiapkan per role agar staff tidak melihat laporan profit dan client hanya melihat data miliknya sendiri.</p></div></div>`
 }
 
-func calendarPanel(title string) string {
-	return `<div class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,.75fr)]"><div class="panel"><div class="panel-head"><h2>` + esc(title) + `</h2><button class="primary-button">Tambah Jadwal</button></div><div class="calendar-grid"><div><strong>10:00</strong><span>Appointment Kedutaan</span><em>Dewi Lestari</em></div><div><strong>13:00</strong><span>Interview Visa</span><em>Jason Tanu</em></div><div><strong>15:00</strong><span>Medical Check Up</span><em>Putri Amanda</em></div><div><strong>26 Jun</strong><span>Deadline dokumen visa</span><em>Ricky Pratama</em></div></div></div>` + quickSchedule() + `</div>`
+func calendarPanel(vm dashboard.ViewModel, title string) string {
+	form := ""
+	if vm.ShowCreateForm {
+		form = `<form method="post" action="/staff/calendar/create" class="student-upload-form"><label>Client<select name="client_id" required><option value="">Pilih client</option>` + clientSelectOptions(vm.Clients) + `</select></label><label>Judul Jadwal<input name="title" required placeholder="Contoh: Interview Visa"></label><label>Tanggal<input name="date_label" placeholder="26 Jun 2026"></label><label>Waktu<input name="time_label" placeholder="10:00"></label><label>Lokasi<input name="location" placeholder="Kedutaan Taiwan"></label><button class="primary-button" type="submit">Simpan Jadwal</button></form>`
+	}
+	var rows strings.Builder
+	for _, item := range vm.Schedules {
+		rows.WriteString(`<div><strong>` + esc(item.TimeLabel) + `</strong><span>` + esc(item.Title) + `</span><em>` + esc(item.DateLabel) + ` - ` + esc(item.Location) + `</em></div>`)
+	}
+	if rows.Len() == 0 {
+		rows.WriteString(`<p class="empty-note">Belum ada jadwal.</p>`)
+	}
+	return `<div class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,.75fr)]"><div class="panel"><div class="panel-head"><h2>` + esc(title) + `</h2>` + toggleFormButton(vm.ShowCreateForm, "Tambah Jadwal", "/staff/calendar") + `</div>` + form + `<div class="calendar-grid">` + rows.String() + `</div></div>` + quickSchedule(vm) + `</div>`
 }
 
 func studentCalendar(vm dashboard.ViewModel) string {
@@ -636,23 +994,44 @@ func chatPanel(vm dashboard.ViewModel, title string) string {
 }
 
 func documentsPanel(documents []dashboard.Document, actionable bool) string {
-	return `<div class="panel table-panel"><div class="panel-head"><h2>Dokumen Menunggu Review</h2><button class="primary-button" type="button">Review Massal</button></div>` + documentsTable(documents, actionable) + `</div>`
+	bulkAction := ""
+	extras := ""
+	if actionable {
+		if countReviewDocs(documents) > 0 {
+			bulkAction = `<form method="post" action="/staff/documents/bulk-approve" class="inline-form"><button class="primary-button" type="submit">Review Massal (` + intText(countReviewDocs(documents)) + `)</button></form>`
+		}
+		extras = rejectModal()
+	}
+	return `<div class="panel table-panel"><div class="panel-head"><h2>Dokumen Menunggu Review</h2>` + bulkAction + `</div>` + documentsTable(documents, actionable) + `</div>` + extras
+}
+
+func rejectModal() string {
+	return `<div class="modal-overlay" data-reject-modal hidden><div class="modal-card"><h3>Tolak Dokumen</h3><p class="modal-sub" data-reject-target></p><form method="post" data-reject-form><label>Alasan penolakan</label><textarea name="reason" rows="3" maxlength="200" required placeholder="Contoh: Foto buram, mohon scan ulang yang lebih jelas"></textarea><div class="modal-actions"><button type="button" class="outline-button" data-reject-cancel>Batal</button><button type="submit" class="danger-button">Tolak Dokumen</button></div></form></div></div>`
 }
 
 func documentsTable(documents []dashboard.Document, actionable bool) string {
 	var rows strings.Builder
 	for _, document := range documents {
-		action := `<button class="outline-button small" type="button" disabled>Belum ada file</button>`
+		action := `<span class="doc-nofile">Belum ada file</span>`
 		if actionable && document.Status == dashboard.DocumentReview {
-			action = `<form method="post" action="/staff/documents/` + attr(document.ID) + `/approve" class="inline-form"><button class="success-button small" type="submit">Approve</button></form><form method="post" action="/staff/documents/` + attr(document.ID) + `/reject" class="inline-form"><button class="danger-button small" type="submit">Reject</button></form>`
+			viewFile := ""
+			if document.StoragePath != "" {
+				viewFile = `<a class="icon-btn icon-btn-view" href="/student/documents/` + attr(document.ID) + `/download" title="Lihat file" aria-label="Lihat file">` + svgIcon("eye") + `</a>`
+			}
+			rejectName := document.ClientName + " - " + document.Name
+			action = `<div class="doc-review-actions"><form method="post" action="/staff/documents/` + attr(document.ID) + `/approve" class="inline-form"><button class="icon-btn icon-btn-approve" type="submit" title="Approve" aria-label="Approve">` + svgIcon("check-plain") + `</button></form>` + viewFile + `<button type="button" class="icon-btn icon-btn-reject" data-reject-url="/staff/documents/` + attr(document.ID) + `/reject" data-reject-name="` + attr(rejectName) + `" title="Reject" aria-label="Reject">` + svgIcon("close") + `</button></div>`
 		} else if document.StoragePath != "" {
-			action = `<a class="outline-button small" href="/student/documents/` + attr(document.ID) + `/download">Download</a>`
+			action = `<a class="icon-btn icon-btn-view" href="/student/documents/` + attr(document.ID) + `/download" title="Download" aria-label="Download">` + svgIcon("download") + `</a>`
 		}
 		fileLabel := document.FileName
 		if fileLabel == "" {
 			fileLabel = "-"
 		}
-		rows.WriteString(`<tr><td>` + esc(document.ClientName) + `</td><td>` + esc(document.Name) + `<span>` + esc(fileLabel) + `</span></td><td>` + esc(dateLabel(document.UpdatedAt)) + `</td><td><span class="status ` + documentStatusClass(document.Status) + `">` + esc(documentStatusLabel(document.Status)) + `</span></td><td>` + esc(document.Reviewer) + `</td><td>` + action + `</td></tr>`)
+		docCell := esc(document.Name) + `<span>` + esc(fileLabel) + `</span>`
+		if document.Status == dashboard.DocumentRevision && document.ReviewNote != "" {
+			docCell += `<span class="doc-note">Alasan revisi: ` + esc(document.ReviewNote) + `</span>`
+		}
+		rows.WriteString(`<tr><td>` + esc(document.ClientName) + `</td><td>` + docCell + `</td><td>` + esc(dateLabel(document.UpdatedAt)) + `</td><td><span class="status ` + documentStatusClass(document.Status) + `">` + esc(documentStatusLabel(document.Status)) + `</span></td><td>` + esc(document.Reviewer) + `</td><td>` + action + `</td></tr>`)
 	}
 	if rows.Len() == 0 {
 		rows.WriteString(`<tr><td colspan="6">Belum ada dokumen.</td></tr>`)
@@ -758,49 +1137,219 @@ func taskListCompact(tasks []dashboard.Task) string {
 	return b.String()
 }
 
-func miniPipeline() string {
-	return kanbanColumn("Konsultasi", "5", "mint", []string{"Budi Santoso|Paket Profesional|Rina", "Siti Aisyah|Paket Basic|Rina", "Fajar Ramadhan|Layanan Satuan|Rina", "Clara Monica|Paket Basic|Rina"}) +
-		kanbanColumn("Persiapan Dokumen", "7", "rose", []string{"Dewi Lestari|Paket Profesional|Rina", "Andi Wijaya|Paket Basic|Rina", "Nabila Putri|Layanan Satuan|Rina", "Jason Tanu|Layanan Satuan|Rina"}) +
-		kanbanColumn("Apply / Proses", "6", "sky", []string{"Ricky Pratama|Paket Profesional|Rina", "Kevin Santoso|Paket Basic|Rina", "Putri Amanda|Layanan Satuan|Rina", "Michelle Chen|Layanan Satuan|Rina"}) +
-		kanbanColumn("Visa & Imigrasi", "4", "violet", []string{"Natasha Lee|Paket Profesional|Rina", "William K.|Paket Basic|Rina", "Budi Setyawan|Layanan Satuan|Rina", "Clara Monica|Layanan Satuan|Rina"}) +
-		kanbanColumn("Keberangkatan", "2", "mint", []string{"Dimas Aditya|Paket Profesional|Rina", "Yuan Zhe|Paket Basic|Rina"})
-}
-
-func kanbanColumn(title, count, tone string, cards []string) string {
-	var b strings.Builder
-	b.WriteString(`<div class="kanban-column tone-` + attr(tone) + `"><div class="kanban-title"><h3>` + esc(title) + `</h3><span>` + esc(count) + ` Klien</span></div><div class="kanban-cards">`)
-	for _, card := range cards {
-		parts := strings.Split(card, "|")
-		name, packageName, pic := parts[0], "", ""
-		if len(parts) > 1 {
-			packageName = parts[1]
-		}
-		if len(parts) > 2 {
-			pic = parts[2]
-		}
-		b.WriteString(`<article><span class="avatar-mini bg-slate-100 text-slate-700">` + initials(name) + `</span><div><strong>` + esc(name) + `</strong><p>` + esc(packageName) + `</p><em>` + esc(pic) + `</em></div></article>`)
+// pipelineColumns renders the kanban board from vm.PipelineStages — the set of
+// stages owners/staff configure themselves (see stageManagerPanel) — rather
+// than a fixed list baked into the code. Clients whose CurrentStage doesn't
+// match any configured stage (e.g. the stage was renamed or deleted) land in
+// an implicit "Belum Ditentukan" column instead of disappearing from the board.
+func pipelineColumns(vm dashboard.ViewModel) string {
+	stages := vm.PipelineStages
+	stageNames := make(map[string]bool, len(stages))
+	for _, stage := range stages {
+		stageNames[stage.Name] = true
 	}
-	b.WriteString(`<button class="more-card">+ ` + esc(count) + ` lainnya</button></div></div>`)
+	grouped := make(map[string][]dashboard.ClientProfile, len(stages))
+	var unassigned []dashboard.ClientProfile
+	for _, client := range vm.Clients {
+		if client.CurrentStage != "" && stageNames[client.CurrentStage] {
+			grouped[client.CurrentStage] = append(grouped[client.CurrentStage], client)
+			continue
+		}
+		unassigned = append(unassigned, client)
+	}
+	moreHref := "/" + vm.Role.String() + "/clients"
+
+	var b strings.Builder
+	b.WriteString(`<section class="kanban-board">`)
+	if len(unassigned) > 0 {
+		b.WriteString(kanbanColumn(dashboard.PipelineStage{Name: "Belum Ditentukan", Tone: "slate"}, unassigned, stages, moreHref))
+	}
+	for _, stage := range stages {
+		b.WriteString(kanbanColumn(stage, grouped[stage.Name], stages, moreHref))
+	}
+	if len(stages) == 0 && len(unassigned) == 0 {
+		b.WriteString(`<p class="empty-note">Belum ada tahap pipeline yang dikonfigurasi.</p>`)
+	}
+	b.WriteString(`</section>`)
 	return b.String()
 }
 
-func quickSchedule() string {
-	return `<div class="panel border-0 shadow-none"><div class="panel-head"><h2>Jadwal Hari Ini</h2><a href="#">Lihat Kalender</a></div><div class="schedule-list"><div><strong>10:00</strong><span>Appointment Kedutaan</span><em>Dewi Lestari</em></div><div><strong>13:00</strong><span>Interview Visa</span><em>Jason Tanu</em></div><div><strong>15:00</strong><span>Medical Check Up</span><em>Putri Amanda</em></div></div></div>`
+func kanbanColumn(stage dashboard.PipelineStage, clients []dashboard.ClientProfile, allStages []dashboard.PipelineStage, moreHref string) string {
+	const maxShown = 4
+	shown := clients
+	remaining := 0
+	if len(clients) > maxShown {
+		shown = clients[:maxShown]
+		remaining = len(clients) - maxShown
+	}
+	tone := stage.Tone
+	if tone == "" {
+		tone = "slate"
+	}
+	var b strings.Builder
+	b.WriteString(`<div class="kanban-column tone-` + attr(tone) + `"><div class="kanban-title"><h3>` + esc(stage.Name) + `</h3><span>` + intText(len(clients)) + ` Klien</span></div><div class="kanban-cards">`)
+	for _, client := range shown {
+		b.WriteString(`<article><span class="avatar-mini bg-slate-100 text-slate-700">` + initials(client.Name) + `</span><div><strong>` + esc(client.Name) + `</strong><p>` + esc(client.PackageName) + `</p><em>` + esc(client.PICName) + `</em>` + stageMoveSelect(client, allStages) + `</div></article>`)
+	}
+	if len(clients) == 0 {
+		b.WriteString(`<p class="empty-note">Belum ada client di tahap ini.</p>`)
+	} else if remaining > 0 {
+		b.WriteString(`<a class="more-card" href="` + attr(moreHref) + `" hx-get="` + attr(moreHref) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">+ ` + intText(remaining) + ` lainnya</a>`)
+	}
+	b.WriteString(`</div></div>`)
+	return b.String()
 }
 
-func recentDocs() string {
-	return `<div class="panel border-0 shadow-none"><div class="panel-head"><h2>Dokumen Terbaru</h2><a href="/staff/documents" hx-get="/staff/documents" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Semua</a></div><div class="doc-list"><div><strong>Budi Santoso - Ijazah</strong><span>Diupload 2 jam lalu</span><em>Selesai</em></div><div><strong>Siti Aisyah - Transkrip Nilai</strong><span>Diupload 3 jam lalu</span><em>Review</em></div><div><strong>Ricky Pratama - Passport</strong><span>Diupload 5 jam lalu</span><em>Review</em></div><div><strong>Dewi Lestari - Form Visa</strong><span>Diupload 6 jam lalu</span><em>Selesai</em></div></div></div>`
+func stageMoveSelect(client dashboard.ClientProfile, stages []dashboard.PipelineStage) string {
+	if len(stages) == 0 {
+		return ""
+	}
+	var opts strings.Builder
+	opts.WriteString(`<option value="" disabled` + selectedIf(client.CurrentStage == "") + `>Pindah ke tahap...</option>`)
+	for _, stage := range stages {
+		opts.WriteString(`<option value="` + attr(stage.Name) + `"` + selectedIf(stage.Name == client.CurrentStage) + `>` + esc(stage.Name) + `</option>`)
+	}
+	action := "/pipeline/clients/" + attr(client.ID) + "/stage"
+	return `<form method="post" action="` + action + `" class="stage-move-form"><select name="stage_name" data-autosubmit aria-label="Pindahkan tahap ` + attr(client.Name) + `">` + opts.String() + `</select></form>`
+}
+
+func selectedIf(cond bool) string {
+	if cond {
+		return " selected"
+	}
+	return ""
+}
+
+func toneHex(tone string) string {
+	switch tone {
+	case "mint":
+		return "#22c55e"
+	case "rose":
+		return "#f43f5e"
+	case "emerald":
+		return "#10b981"
+	case "sky":
+		return "#0ea5e9"
+	case "violet":
+		return "#8b5cf6"
+	case "lime":
+		return "#84cc16"
+	case "amber":
+		return "#f59e0b"
+	case "blue":
+		return "#3b82f6"
+	case "teal":
+		return "#14b8a6"
+	default:
+		return "#94a3b8"
+	}
+}
+
+// stageManagerPanel lets an owner or staff member define the pipeline stages
+// themselves — add, rename, reorder, or delete — with no code change and no
+// developer involvement, addressing pipelines whose shape isn't known up front.
+func stageManagerPanel(stages []dashboard.PipelineStage) string {
+	var rows strings.Builder
+	for i, stage := range stages {
+		upAttr := ""
+		if i == 0 {
+			upAttr = " disabled"
+		}
+		downAttr := ""
+		if i == len(stages)-1 {
+			downAttr = " disabled"
+		}
+		confirmMsg := "Hapus tahap \"" + stage.Name + "\"? Client di tahap ini akan dipindah ke Belum Ditentukan."
+		rows.WriteString(`<div class="stage-manager-row">`)
+		rows.WriteString(`<span class="stage-swatch" style="background:` + toneHex(stage.Tone) + `"></span>`)
+		rows.WriteString(`<form method="post" action="/pipeline/stages/` + attr(stage.ID) + `/rename" class="rename-form"><input name="name" value="` + attr(stage.Name) + `" required maxlength="80" aria-label="Nama tahap"><button class="outline-button small" type="submit">Simpan</button></form>`)
+		rows.WriteString(`<div class="stage-manager-actions">`)
+		rows.WriteString(`<form method="post" action="/pipeline/stages/` + attr(stage.ID) + `/move" class="inline-form"><input type="hidden" name="direction" value="up"><button type="submit"` + upAttr + ` title="Naikkan urutan" aria-label="Naikkan urutan">` + svgIcon("arrow-up") + `</button></form>`)
+		rows.WriteString(`<form method="post" action="/pipeline/stages/` + attr(stage.ID) + `/move" class="inline-form"><input type="hidden" name="direction" value="down"><button type="submit"` + downAttr + ` title="Turunkan urutan" aria-label="Turunkan urutan">` + svgIcon("arrow-down") + `</button></form>`)
+		rows.WriteString(`<form method="post" action="/pipeline/stages/` + attr(stage.ID) + `/delete" class="inline-form" data-confirm="` + attr(confirmMsg) + `"><button type="submit" class="stage-delete" title="Hapus tahap" aria-label="Hapus tahap">` + svgIcon("close") + `</button></form>`)
+		rows.WriteString(`</div></div>`)
+	}
+	if rows.Len() == 0 {
+		rows.WriteString(`<p class="empty-note">Belum ada tahap. Tambahkan tahap pertama di bawah.</p>`)
+	}
+	return `<div class="panel stage-manager"><h3 class="text-sm font-semibold mb-1">Kelola Tahap Pipeline</h3><p class="text-xs text-slate-500 mb-3">Tambah, ubah nama, urutkan, atau hapus tahap sesuai kebutuhan operasional kamu — tidak perlu ubah kode program.</p>` + rows.String() + `<form method="post" action="/pipeline/stages/create" class="stage-manager-add mt-2"><input name="name" placeholder="Nama tahap baru, contoh: Medical Check Up" required maxlength="80" aria-label="Nama tahap baru"><button class="primary-button" type="submit">+ Tambah Tahap</button></form></div>`
+}
+
+func staffReminderList(vm dashboard.ViewModel) string {
+	var items []string
+	if n := countOpenTasks(vm.Tasks); n > 0 {
+		items = append(items, intText(n)+" tugas belum selesai")
+	}
+	if n := countReviewDocs(vm.Documents); n > 0 {
+		items = append(items, intText(n)+" dokumen menunggu review")
+	}
+	if n := countWaitingExpenses(vm.Expenses); n > 0 {
+		items = append(items, intText(n)+" pengeluaran menunggu dicatat")
+	}
+	if n := len(vm.Schedules); n > 0 {
+		items = append(items, intText(n)+" jadwal aktif")
+	}
+	if len(items) == 0 {
+		return `<ul class="reminder-list clean"><li>Tidak ada pengingat. Semua tugas beres 🎉</li></ul>`
+	}
+	var b strings.Builder
+	b.WriteString(`<ul class="reminder-list clean">`)
+	for _, item := range items {
+		b.WriteString(`<li>` + esc(item) + `</li>`)
+	}
+	b.WriteString(`</ul>`)
+	return b.String()
+}
+
+func quickSchedule(vm dashboard.ViewModel) string {
+	var rows strings.Builder
+	shown := 0
+	for _, item := range vm.Schedules {
+		if shown >= 4 {
+			break
+		}
+		time := item.TimeLabel
+		if time == "" {
+			time = item.DateLabel
+		}
+		rows.WriteString(`<div><strong>` + esc(time) + `</strong><span>` + esc(item.Title) + `</span><em>` + esc(item.Location) + `</em></div>`)
+		shown++
+	}
+	if rows.Len() == 0 {
+		rows.WriteString(`<p class="empty-note">Belum ada jadwal. Tambahkan lewat menu Kalender.</p>`)
+	}
+	return `<div class="panel border-0 shadow-none"><div class="panel-head"><h2>Jadwal Terdekat</h2><a href="/staff/calendar" hx-get="/staff/calendar" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Kalender</a></div><div class="schedule-list">` + rows.String() + `</div></div>`
+}
+
+func recentDocs(vm dashboard.ViewModel) string {
+	var rows strings.Builder
+	shown := 0
+	for _, document := range vm.Documents {
+		if shown >= 4 {
+			break
+		}
+		rows.WriteString(`<div><strong>` + esc(document.ClientName) + ` - ` + esc(document.Name) + `</strong><span>` + esc(dateLabel(document.UpdatedAt)) + `</span><em>` + esc(documentStatusLabel(document.Status)) + `</em></div>`)
+		shown++
+	}
+	if rows.Len() == 0 {
+		rows.WriteString(`<p class="empty-note">Belum ada dokumen dari client.</p>`)
+	}
+	return `<div class="panel border-0 shadow-none"><div class="panel-head"><h2>Dokumen Terbaru</h2><a href="/staff/documents" hx-get="/staff/documents" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Semua</a></div><div class="doc-list">` + rows.String() + `</div></div>`
 }
 
 func expensesTable(expenses []dashboard.Expense) string {
 	var rows strings.Builder
 	for _, expense := range expenses {
-		rows.WriteString(`<tr><td>` + esc(expense.DateLabel) + `</td><td><strong>` + esc(expense.ClientName) + `</strong></td><td>` + esc(expense.Need) + `</td><td>` + esc(expense.Category) + `</td><td>` + money(expense.Amount) + `</td><td><span class="receipt-thumb"></span></td><td>` + esc(expenseStatusLabel(expense.Status)) + `</td><td><button class="icon-action" type="button">Lihat</button></td></tr>`)
+		action := `<button class="icon-action small" type="button" disabled>Belum ada bukti</button>`
+		if expense.ReceiptStoragePath != "" {
+			action = `<a class="icon-action" href="/staff/expenses/` + attr(expense.ID) + `/receipt">Lihat</a>`
+		}
+		rows.WriteString(`<tr><td>` + esc(expense.DateLabel) + `</td><td><strong>` + esc(expense.ClientName) + `</strong></td><td>` + esc(expense.Need) + `</td><td>` + esc(expense.Category) + `</td><td>` + money(expense.Amount) + `</td><td><span class="receipt-thumb"></span></td><td>` + esc(expenseStatusLabel(expense.Status)) + `</td><td>` + action + `</td></tr>`)
 	}
 	if rows.Len() == 0 {
 		rows.WriteString(`<tr><td colspan="8">Belum ada pengeluaran.</td></tr>`)
 	}
-	return `<div class="toolbar-row mb-4"><div class="filter-group"><button class="outline-button">Semua Klien</button><button class="outline-button">Semua Kategori</button><button class="outline-button">Semua Status</button><button class="outline-button">01/06/2026 - 25/06/2026</button></div></div><table class="data-table"><thead><tr><th>Tanggal</th><th>Klien</th><th>Berkas / Keperluan</th><th>Kategori</th><th>Nominal</th><th>Bukti</th><th>Status</th><th>Aksi</th></tr></thead><tbody>` + rows.String() + `</tbody></table><div class="pagination"><span>Menampilkan ` + intText(len(expenses)) + ` data</span><div><button disabled>&lt;</button><button class="active">1</button><button disabled>&gt;</button></div></div>`
+	return `<table class="data-table"><thead><tr><th>Tanggal</th><th>Klien</th><th>Berkas / Keperluan</th><th>Kategori</th><th>Nominal</th><th>Bukti</th><th>Status</th><th>Aksi</th></tr></thead><tbody>` + rows.String() + `</tbody></table><div class="pagination"><span>Menampilkan ` + intText(len(expenses)) + ` data</span><div><button disabled>&lt;</button><button class="active">1</button><button disabled>&gt;</button></div></div>`
 }
 
 func firstClient(clients []dashboard.ClientProfile) dashboard.ClientProfile {
@@ -1103,6 +1652,22 @@ func svgIcon(name string) string {
 		return svg(`<path d="M3 17 9 11l4 4 8-8"></path><path d="M14 7h7v7"></path>`)
 	case "orders":
 		return svg(`<rect x="5" y="4" width="14" height="17" rx="2"></rect><path d="M9 4a3 3 0 0 1 6 0"></path><path d="M9 10h6"></path><path d="M9 14h6"></path><path d="M9 18h4"></path>`)
+	case "check-plain":
+		return svg(`<path d="M20 6 9 17l-5-5"></path>`)
+	case "eye":
+		return svg(`<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle>`)
+	case "close":
+		return svg(`<path d="M18 6 6 18"></path><path d="m6 6 12 12"></path>`)
+	case "download":
+		return svg(`<path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path>`)
+	case "arrow-up":
+		return svg(`<path d="M12 19V5"></path><path d="m5 12 7-7 7 7"></path>`)
+	case "arrow-down":
+		return svg(`<path d="M12 5v14"></path><path d="m19 12-7 7-7-7"></path>`)
+	case "plus":
+		return svg(`<path d="M12 5v14"></path><path d="M5 12h14"></path>`)
+	case "settings-slider":
+		return svg(`<line x1="4" x2="4" y1="21" y2="14"></line><line x1="4" x2="4" y1="10" y2="3"></line><line x1="12" x2="12" y1="21" y2="12"></line><line x1="12" x2="12" y1="8" y2="3"></line><line x1="20" x2="20" y1="21" y2="16"></line><line x1="20" x2="20" y1="12" y2="3"></line><line x1="2" x2="6" y1="14" y2="14"></line><line x1="10" x2="14" y1="8" y2="8"></line><line x1="18" x2="22" y1="16" y2="16"></line>`)
 	default:
 		return svg(`<circle cx="12" cy="12" r="9"></circle>`)
 	}

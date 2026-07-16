@@ -60,6 +60,12 @@ func NewSQLRepository(ctx context.Context, db *sql.DB, driver string, opts SQLRe
 	if err := repo.ensureStudentProgressDefaults(ctx); err != nil {
 		return nil, err
 	}
+	if err := repo.ensurePipelineStagesSeeded(ctx); err != nil {
+		return nil, err
+	}
+	if err := repo.ensureServicePackagesSeeded(ctx); err != nil {
+		return nil, err
+	}
 	return repo, nil
 }
 
@@ -322,7 +328,7 @@ func (r *SQLRepository) ListDocuments(ctx context.Context, viewer User, viewRole
 		visible[client.ID] = true
 	}
 
-	rows, err := r.query(ctx, `SELECT d.id, d.client_id, COALESCE(c.name, ''), d.name, d.status, d.reviewer, COALESCE(d.file_name, ''), COALESCE(d.storage_path, ''), d.updated_at FROM documents d LEFT JOIN clients c ON c.id = d.client_id ORDER BY d.updated_at DESC`)
+	rows, err := r.query(ctx, `SELECT d.id, d.client_id, COALESCE(c.name, ''), d.name, d.status, d.reviewer, COALESCE(d.review_note, ''), COALESCE(d.file_name, ''), COALESCE(d.storage_path, ''), d.updated_at FROM documents d LEFT JOIN clients c ON c.id = d.client_id ORDER BY d.updated_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +338,7 @@ func (r *SQLRepository) ListDocuments(ctx context.Context, viewer User, viewRole
 	for rows.Next() {
 		var document Document
 		var status string
-		if err := rows.Scan(&document.ID, &document.ClientID, &document.ClientName, &document.Name, &status, &document.Reviewer, &document.FileName, &document.StoragePath, &document.UpdatedAt); err != nil {
+		if err := rows.Scan(&document.ID, &document.ClientID, &document.ClientName, &document.Name, &status, &document.Reviewer, &document.ReviewNote, &document.FileName, &document.StoragePath, &document.UpdatedAt); err != nil {
 			return nil, err
 		}
 		document.Status = DocumentStatus(status)
@@ -433,7 +439,7 @@ func (r *SQLRepository) ListExpenses(ctx context.Context, viewer User, viewRole 
 		visible[client.ID] = true
 	}
 
-	rows, err := r.query(ctx, `SELECT e.id, e.staff_id, e.client_id, COALESCE(c.name, ''), e.need, e.category, e.amount, e.status, e.date_label, e.description FROM expenses e LEFT JOIN clients c ON c.id = e.client_id`)
+	rows, err := r.query(ctx, `SELECT e.id, e.staff_id, e.client_id, COALESCE(c.name, ''), e.need, e.category, e.amount, e.status, e.date_label, e.description, COALESCE(e.receipt_file_name, ''), COALESCE(e.receipt_storage_path, '') FROM expenses e LEFT JOIN clients c ON c.id = e.client_id ORDER BY e.date_label DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -443,7 +449,7 @@ func (r *SQLRepository) ListExpenses(ctx context.Context, viewer User, viewRole 
 	for rows.Next() {
 		var expense Expense
 		var status string
-		if err := rows.Scan(&expense.ID, &expense.StaffID, &expense.ClientID, &expense.ClientName, &expense.Need, &expense.Category, &expense.Amount, &status, &expense.DateLabel, &expense.Description); err != nil {
+		if err := rows.Scan(&expense.ID, &expense.StaffID, &expense.ClientID, &expense.ClientName, &expense.Need, &expense.Category, &expense.Amount, &status, &expense.DateLabel, &expense.Description, &expense.ReceiptFileName, &expense.ReceiptStoragePath); err != nil {
 			return nil, err
 		}
 		expense.Status = ExpenseStatus(status)
@@ -543,7 +549,8 @@ func (r *SQLRepository) UploadStudentDocument(ctx context.Context, viewer User, 
 	now := time.Now()
 	existing, err := r.findDocumentByClientAndName(ctx, client.ID, documentName)
 	if err == nil {
-		if _, err := r.exec(ctx, `UPDATE documents SET status = ?, reviewer = ?, file_name = ?, storage_path = ?, updated_at = ? WHERE id = ?`, DocumentReview, "", fileName, storagePath, now, existing.ID); err != nil {
+		// Re-upload resets the document back to review and clears the previous reviewer/note.
+		if _, err := r.exec(ctx, `UPDATE documents SET status = ?, reviewer = ?, review_note = ?, file_name = ?, storage_path = ?, updated_at = ? WHERE id = ?`, DocumentReview, "", "", fileName, storagePath, now, existing.ID); err != nil {
 			return Document{}, err
 		}
 		return r.findDocumentByID(ctx, existing.ID)
@@ -552,13 +559,13 @@ func (r *SQLRepository) UploadStudentDocument(ctx context.Context, viewer User, 
 		return Document{}, err
 	}
 	id := newID("doc")
-	if _, err := r.exec(ctx, `INSERT INTO documents (id, client_id, name, status, reviewer, file_name, storage_path, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, id, client.ID, documentName, DocumentReview, "", fileName, storagePath, now); err != nil {
+	if _, err := r.exec(ctx, `INSERT INTO documents (id, client_id, name, status, reviewer, review_note, file_name, storage_path, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, client.ID, documentName, DocumentReview, "", "", fileName, storagePath, now); err != nil {
 		return Document{}, err
 	}
 	return r.findDocumentByID(ctx, id)
 }
 
-func (r *SQLRepository) ReviewDocument(ctx context.Context, viewer User, documentID string, status DocumentStatus) (Document, error) {
+func (r *SQLRepository) ReviewDocument(ctx context.Context, viewer User, documentID string, status DocumentStatus, note string) (Document, error) {
 	if viewer.Role != RoleOwner && viewer.Role != RoleStaff {
 		return Document{}, ErrForbidden
 	}
@@ -569,6 +576,10 @@ func (r *SQLRepository) ReviewDocument(ctx context.Context, viewer User, documen
 	if err != nil {
 		return Document{}, err
 	}
+	// Only documents that are actually waiting for review can be approved/rejected.
+	if document.Status != DocumentReview {
+		return Document{}, ErrInvalidInput
+	}
 	client, err := r.findClientByID(ctx, document.ClientID)
 	if err != nil {
 		return Document{}, err
@@ -576,8 +587,14 @@ func (r *SQLRepository) ReviewDocument(ctx context.Context, viewer User, documen
 	if viewer.Role == RoleStaff && client.PICStaffID != viewer.ID {
 		return Document{}, ErrForbidden
 	}
+	note = strings.TrimSpace(note)
+	if status == DocumentApproved {
+		note = ""
+	} else if note == "" {
+		note = "Dokumen perlu diperbaiki. Silakan unggah ulang sesuai ketentuan."
+	}
 	now := time.Now()
-	if _, err := r.exec(ctx, `UPDATE documents SET status = ?, reviewer = ?, updated_at = ? WHERE id = ?`, status, viewer.Name, now, documentID); err != nil {
+	if _, err := r.exec(ctx, `UPDATE documents SET status = ?, reviewer = ?, review_note = ?, updated_at = ? WHERE id = ?`, status, viewer.Name, note, now, documentID); err != nil {
 		return Document{}, err
 	}
 	return r.findDocumentByID(ctx, documentID)
@@ -598,6 +615,474 @@ func (r *SQLRepository) CompleteTask(ctx context.Context, viewer User, taskID st
 		return Task{}, err
 	}
 	return r.findTaskByID(ctx, taskID)
+}
+
+func (r *SQLRepository) CreateTask(ctx context.Context, viewer User, input CreateTaskInput) (Task, error) {
+	if viewer.Role != RoleOwner && viewer.Role != RoleStaff {
+		return Task{}, ErrForbidden
+	}
+	title := strings.TrimSpace(input.Title)
+	if title == "" {
+		return Task{}, ErrInvalidInput
+	}
+	client, err := r.findClientByID(ctx, input.ClientID)
+	if err != nil {
+		return Task{}, err
+	}
+	if viewer.Role == RoleStaff && client.PICStaffID != viewer.ID {
+		return Task{}, ErrForbidden
+	}
+	staffID := client.PICStaffID
+	if staffID == "" {
+		staffID = viewer.ID
+	}
+	timeLabel := strings.TrimSpace(input.TimeLabel)
+	if timeLabel == "" {
+		timeLabel = time.Now().Format("15:04")
+	}
+	priority := strings.TrimSpace(input.Priority)
+	if priority == "" {
+		priority = "Sedang"
+	}
+	id := newID("task")
+	if _, err := r.exec(ctx, `INSERT INTO tasks (id, staff_id, client_id, time_label, title, priority, status) VALUES (?, ?, ?, ?, ?, ?, ?)`, id, staffID, client.ID, timeLabel, title, priority, TaskOpen); err != nil {
+		return Task{}, err
+	}
+	return r.findTaskByID(ctx, id)
+}
+
+func (r *SQLRepository) CreateExpense(ctx context.Context, viewer User, input CreateExpenseInput) (Expense, error) {
+	if viewer.Role != RoleOwner && viewer.Role != RoleStaff {
+		return Expense{}, ErrForbidden
+	}
+	need := strings.TrimSpace(input.Need)
+	if need == "" || input.Amount <= 0 {
+		return Expense{}, ErrInvalidInput
+	}
+	client, err := r.findClientByID(ctx, input.ClientID)
+	if err != nil {
+		return Expense{}, err
+	}
+	if viewer.Role == RoleStaff && client.PICStaffID != viewer.ID {
+		return Expense{}, ErrForbidden
+	}
+	dateLabel := strings.TrimSpace(input.DateLabel)
+	if dateLabel == "" {
+		dateLabel = time.Now().Format("02/01/2006")
+	}
+	category := strings.TrimSpace(input.Category)
+	if category == "" {
+		category = "Lainnya"
+	}
+	status := ExpenseWaiting
+	if viewer.Role == RoleOwner {
+		status = ExpenseRecorded
+	}
+	staffID := client.PICStaffID
+	if staffID == "" {
+		staffID = viewer.ID
+	}
+	id := newID("expense")
+	if _, err := r.exec(ctx, `INSERT INTO expenses (id, staff_id, client_id, need, category, amount, status, date_label, description, receipt_file_name, receipt_storage_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, staffID, client.ID, need, category, input.Amount, status, dateLabel, strings.TrimSpace(input.Description), strings.TrimSpace(input.FileName), strings.TrimSpace(input.StoragePath)); err != nil {
+		return Expense{}, err
+	}
+	return r.findExpenseByID(ctx, id)
+}
+
+func (r *SQLRepository) CreateSchedule(ctx context.Context, viewer User, input CreateScheduleInput) (ScheduleItem, error) {
+	if viewer.Role != RoleOwner && viewer.Role != RoleStaff {
+		return ScheduleItem{}, ErrForbidden
+	}
+	title := strings.TrimSpace(input.Title)
+	if title == "" {
+		return ScheduleItem{}, ErrInvalidInput
+	}
+	client, err := r.findClientByID(ctx, input.ClientID)
+	if err != nil {
+		return ScheduleItem{}, err
+	}
+	if viewer.Role == RoleStaff && client.PICStaffID != viewer.ID {
+		return ScheduleItem{}, ErrForbidden
+	}
+	id := newID("schedule")
+	now := time.Now()
+	if _, err := r.exec(ctx, `INSERT INTO schedules (id, client_id, title, date_label, time_label, location, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, id, client.ID, title, strings.TrimSpace(input.DateLabel), strings.TrimSpace(input.TimeLabel), strings.TrimSpace(input.Location), "Terjadwal", now); err != nil {
+		return ScheduleItem{}, err
+	}
+	return r.findScheduleByID(ctx, id)
+}
+
+func (r *SQLRepository) BulkApproveDocuments(ctx context.Context, viewer User) (int, error) {
+	if viewer.Role != RoleOwner && viewer.Role != RoleStaff {
+		return 0, ErrForbidden
+	}
+	documents, err := r.ListDocuments(ctx, viewer, viewer.Role)
+	if err != nil {
+		return 0, err
+	}
+	now := time.Now()
+	count := 0
+	for _, document := range documents {
+		if document.Status != DocumentReview {
+			continue
+		}
+		if _, err := r.exec(ctx, `UPDATE documents SET status = ?, reviewer = ?, updated_at = ? WHERE id = ?`, DocumentApproved, viewer.Name, now, document.ID); err != nil {
+			return count, err
+		}
+		count++
+	}
+	return count, nil
+}
+
+var pipelineTonePalette = []string{"mint", "rose", "emerald", "sky", "violet", "lime", "amber", "blue", "teal"}
+
+func (r *SQLRepository) ListPipelineStages(ctx context.Context) ([]PipelineStage, error) {
+	rows, err := r.query(ctx, `SELECT id, name, position, tone, created_at FROM pipeline_stages ORDER BY position ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var stages []PipelineStage
+	for rows.Next() {
+		var stage PipelineStage
+		if err := rows.Scan(&stage.ID, &stage.Name, &stage.Position, &stage.Tone, &stage.CreatedAt); err != nil {
+			return nil, err
+		}
+		stages = append(stages, stage)
+	}
+	return stages, rows.Err()
+}
+
+func (r *SQLRepository) CreatePipelineStage(ctx context.Context, viewer User, name string) (PipelineStage, error) {
+	if viewer.Role != RoleOwner && viewer.Role != RoleStaff {
+		return PipelineStage{}, ErrForbidden
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return PipelineStage{}, ErrInvalidInput
+	}
+	existing, err := r.ListPipelineStages(ctx)
+	if err != nil {
+		return PipelineStage{}, err
+	}
+	for _, stage := range existing {
+		if strings.EqualFold(stage.Name, name) {
+			return PipelineStage{}, ErrDuplicate
+		}
+	}
+	stage := PipelineStage{
+		ID:        newID("pstage"),
+		Name:      name,
+		Position:  len(existing),
+		Tone:      pipelineTonePalette[len(existing)%len(pipelineTonePalette)],
+		CreatedAt: time.Now(),
+	}
+	if _, err := r.exec(ctx, `INSERT INTO pipeline_stages (id, name, position, tone, created_at) VALUES (?, ?, ?, ?, ?)`, stage.ID, stage.Name, stage.Position, stage.Tone, stage.CreatedAt); err != nil {
+		return PipelineStage{}, err
+	}
+	return stage, nil
+}
+
+func (r *SQLRepository) RenamePipelineStage(ctx context.Context, viewer User, stageID, name string) (PipelineStage, error) {
+	if viewer.Role != RoleOwner && viewer.Role != RoleStaff {
+		return PipelineStage{}, ErrForbidden
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return PipelineStage{}, ErrInvalidInput
+	}
+	stages, err := r.ListPipelineStages(ctx)
+	if err != nil {
+		return PipelineStage{}, err
+	}
+	var target PipelineStage
+	found := false
+	for _, stage := range stages {
+		if stage.ID == stageID {
+			target = stage
+			found = true
+			continue
+		}
+		if strings.EqualFold(stage.Name, name) {
+			return PipelineStage{}, ErrDuplicate
+		}
+	}
+	if !found {
+		return PipelineStage{}, ErrNotFound
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return PipelineStage{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := r.txExec(ctx, tx, `UPDATE pipeline_stages SET name = ? WHERE id = ?`, name, stageID); err != nil {
+		return PipelineStage{}, err
+	}
+	// Clients tracked by the old free-text name follow the stage to its new name.
+	if _, err := r.txExec(ctx, tx, `UPDATE clients SET current_stage = ? WHERE current_stage = ?`, name, target.Name); err != nil {
+		return PipelineStage{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return PipelineStage{}, err
+	}
+	target.Name = name
+	return target, nil
+}
+
+func (r *SQLRepository) DeletePipelineStage(ctx context.Context, viewer User, stageID string) error {
+	if viewer.Role != RoleOwner && viewer.Role != RoleStaff {
+		return ErrForbidden
+	}
+	stages, err := r.ListPipelineStages(ctx)
+	if err != nil {
+		return err
+	}
+	var target PipelineStage
+	found := false
+	for _, stage := range stages {
+		if stage.ID == stageID {
+			target = stage
+			found = true
+			break
+		}
+	}
+	if !found {
+		return ErrNotFound
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	// Clients sitting on the deleted stage become unassigned rather than
+	// silently vanishing from the board; they show up in the "Belum
+	// Ditentukan" bucket until someone moves them to a real stage.
+	if _, err := r.txExec(ctx, tx, `UPDATE clients SET current_stage = '' WHERE current_stage = ?`, target.Name); err != nil {
+		return err
+	}
+	if _, err := r.txExec(ctx, tx, `DELETE FROM pipeline_stages WHERE id = ?`, stageID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (r *SQLRepository) ReorderPipelineStage(ctx context.Context, viewer User, stageID, direction string) error {
+	if viewer.Role != RoleOwner && viewer.Role != RoleStaff {
+		return ErrForbidden
+	}
+	stages, err := r.ListPipelineStages(ctx)
+	if err != nil {
+		return err
+	}
+	index := -1
+	for i, stage := range stages {
+		if stage.ID == stageID {
+			index = i
+			break
+		}
+	}
+	if index == -1 {
+		return ErrNotFound
+	}
+	swapWith := -1
+	switch direction {
+	case "up":
+		swapWith = index - 1
+	case "down":
+		swapWith = index + 1
+	default:
+		return ErrInvalidInput
+	}
+	if swapWith < 0 || swapWith >= len(stages) {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := r.txExec(ctx, tx, `UPDATE pipeline_stages SET position = ? WHERE id = ?`, stages[swapWith].Position, stages[index].ID); err != nil {
+		return err
+	}
+	if _, err := r.txExec(ctx, tx, `UPDATE pipeline_stages SET position = ? WHERE id = ?`, stages[index].Position, stages[swapWith].ID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (r *SQLRepository) UpdateClientStage(ctx context.Context, viewer User, clientID, stageName string) (ClientProfile, error) {
+	if viewer.Role != RoleOwner && viewer.Role != RoleStaff {
+		return ClientProfile{}, ErrForbidden
+	}
+	client, err := r.findClientByID(ctx, clientID)
+	if err != nil {
+		return ClientProfile{}, err
+	}
+	if viewer.Role == RoleStaff && client.PICStaffID != viewer.ID {
+		return ClientProfile{}, ErrForbidden
+	}
+	stageName = strings.TrimSpace(stageName)
+	status := stageName
+	progress := client.Progress
+	if strings.EqualFold(stageName, "Selesai") {
+		progress = 100
+	}
+	if _, err := r.exec(ctx, `UPDATE clients SET current_stage = ?, status = ?, progress = ? WHERE id = ?`, stageName, status, progress, clientID); err != nil {
+		return ClientProfile{}, err
+	}
+	return r.findClientByID(ctx, clientID)
+}
+
+func (r *SQLRepository) ListServicePackages(ctx context.Context) ([]ServicePackage, error) {
+	rows, err := r.query(ctx, `SELECT id, name, category, description, price, price_is_from, highlights, position, created_at FROM service_packages ORDER BY position ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var packages []ServicePackage
+	for rows.Next() {
+		var pkg ServicePackage
+		if err := rows.Scan(&pkg.ID, &pkg.Name, &pkg.Category, &pkg.Description, &pkg.Price, &pkg.PriceIsFrom, &pkg.Highlights, &pkg.Position, &pkg.CreatedAt); err != nil {
+			return nil, err
+		}
+		packages = append(packages, pkg)
+	}
+	return packages, rows.Err()
+}
+
+func validateServicePackageInput(input ServicePackageInput) error {
+	if strings.TrimSpace(input.Name) == "" || input.Price < 0 {
+		return ErrInvalidInput
+	}
+	return nil
+}
+
+func (r *SQLRepository) CreateServicePackage(ctx context.Context, viewer User, input ServicePackageInput) (ServicePackage, error) {
+	if viewer.Role != RoleOwner {
+		return ServicePackage{}, ErrForbidden
+	}
+	if err := validateServicePackageInput(input); err != nil {
+		return ServicePackage{}, err
+	}
+	existing, err := r.ListServicePackages(ctx)
+	if err != nil {
+		return ServicePackage{}, err
+	}
+	for _, pkg := range existing {
+		if strings.EqualFold(pkg.Name, input.Name) {
+			return ServicePackage{}, ErrDuplicate
+		}
+	}
+	pkg := ServicePackage{
+		ID:          newID("svcpkg"),
+		Name:        strings.TrimSpace(input.Name),
+		Category:    strings.TrimSpace(input.Category),
+		Description: strings.TrimSpace(input.Description),
+		Price:       input.Price,
+		PriceIsFrom: input.PriceIsFrom,
+		Highlights:  strings.TrimSpace(input.Highlights),
+		Position:    len(existing),
+		CreatedAt:   time.Now(),
+	}
+	if _, err := r.exec(ctx, `INSERT INTO service_packages (id, name, category, description, price, price_is_from, highlights, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, pkg.ID, pkg.Name, pkg.Category, pkg.Description, pkg.Price, pkg.PriceIsFrom, pkg.Highlights, pkg.Position, pkg.CreatedAt); err != nil {
+		return ServicePackage{}, err
+	}
+	return pkg, nil
+}
+
+func (r *SQLRepository) UpdateServicePackage(ctx context.Context, viewer User, packageID string, input ServicePackageInput) (ServicePackage, error) {
+	if viewer.Role != RoleOwner {
+		return ServicePackage{}, ErrForbidden
+	}
+	if err := validateServicePackageInput(input); err != nil {
+		return ServicePackage{}, err
+	}
+	packages, err := r.ListServicePackages(ctx)
+	if err != nil {
+		return ServicePackage{}, err
+	}
+	found := false
+	for _, pkg := range packages {
+		if pkg.ID == packageID {
+			found = true
+			continue
+		}
+		if strings.EqualFold(pkg.Name, input.Name) {
+			return ServicePackage{}, ErrDuplicate
+		}
+	}
+	if !found {
+		return ServicePackage{}, ErrNotFound
+	}
+	name := strings.TrimSpace(input.Name)
+	if _, err := r.exec(ctx, `UPDATE service_packages SET name = ?, category = ?, description = ?, price = ?, price_is_from = ?, highlights = ? WHERE id = ?`, name, strings.TrimSpace(input.Category), strings.TrimSpace(input.Description), input.Price, input.PriceIsFrom, strings.TrimSpace(input.Highlights), packageID); err != nil {
+		return ServicePackage{}, err
+	}
+	var updated ServicePackage
+	if err := r.queryRow(ctx, `SELECT id, name, category, description, price, price_is_from, highlights, position, created_at FROM service_packages WHERE id = ?`, packageID).Scan(&updated.ID, &updated.Name, &updated.Category, &updated.Description, &updated.Price, &updated.PriceIsFrom, &updated.Highlights, &updated.Position, &updated.CreatedAt); err != nil {
+		return ServicePackage{}, err
+	}
+	return updated, nil
+}
+
+func (r *SQLRepository) DeleteServicePackage(ctx context.Context, viewer User, packageID string) error {
+	if viewer.Role != RoleOwner {
+		return ErrForbidden
+	}
+	result, err := r.exec(ctx, `DELETE FROM service_packages WHERE id = ?`, packageID)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *SQLRepository) ReorderServicePackage(ctx context.Context, viewer User, packageID, direction string) error {
+	if viewer.Role != RoleOwner {
+		return ErrForbidden
+	}
+	packages, err := r.ListServicePackages(ctx)
+	if err != nil {
+		return err
+	}
+	index := -1
+	for i, pkg := range packages {
+		if pkg.ID == packageID {
+			index = i
+			break
+		}
+	}
+	if index == -1 {
+		return ErrNotFound
+	}
+	swapWith := -1
+	switch direction {
+	case "up":
+		swapWith = index - 1
+	case "down":
+		swapWith = index + 1
+	default:
+		return ErrInvalidInput
+	}
+	if swapWith < 0 || swapWith >= len(packages) {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := r.txExec(ctx, tx, `UPDATE service_packages SET position = ? WHERE id = ?`, packages[swapWith].Position, packages[index].ID); err != nil {
+		return err
+	}
+	if _, err := r.txExec(ctx, tx, `UPDATE service_packages SET position = ? WHERE id = ?`, packages[index].Position, packages[swapWith].ID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (r *SQLRepository) ListConversations(ctx context.Context, viewer User) ([]ChatConversation, error) {
@@ -735,7 +1220,7 @@ func (r *SQLRepository) findClientByID(ctx context.Context, id string) (ClientPr
 func (r *SQLRepository) findDocumentByID(ctx context.Context, id string) (Document, error) {
 	var document Document
 	var status string
-	if err := r.queryRow(ctx, `SELECT d.id, d.client_id, COALESCE(c.name, ''), d.name, d.status, d.reviewer, COALESCE(d.file_name, ''), COALESCE(d.storage_path, ''), d.updated_at FROM documents d LEFT JOIN clients c ON c.id = d.client_id WHERE d.id = ?`, id).Scan(&document.ID, &document.ClientID, &document.ClientName, &document.Name, &status, &document.Reviewer, &document.FileName, &document.StoragePath, &document.UpdatedAt); err != nil {
+	if err := r.queryRow(ctx, `SELECT d.id, d.client_id, COALESCE(c.name, ''), d.name, d.status, d.reviewer, COALESCE(d.review_note, ''), COALESCE(d.file_name, ''), COALESCE(d.storage_path, ''), d.updated_at FROM documents d LEFT JOIN clients c ON c.id = d.client_id WHERE d.id = ?`, id).Scan(&document.ID, &document.ClientID, &document.ClientName, &document.Name, &status, &document.Reviewer, &document.ReviewNote, &document.FileName, &document.StoragePath, &document.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Document{}, ErrNotFound
 		}
@@ -748,7 +1233,7 @@ func (r *SQLRepository) findDocumentByID(ctx context.Context, id string) (Docume
 func (r *SQLRepository) findDocumentByClientAndName(ctx context.Context, clientID, name string) (Document, error) {
 	var document Document
 	var status string
-	if err := r.queryRow(ctx, `SELECT d.id, d.client_id, COALESCE(c.name, ''), d.name, d.status, d.reviewer, COALESCE(d.file_name, ''), COALESCE(d.storage_path, ''), d.updated_at FROM documents d LEFT JOIN clients c ON c.id = d.client_id WHERE d.client_id = ? AND LOWER(d.name) = LOWER(?)`, clientID, name).Scan(&document.ID, &document.ClientID, &document.ClientName, &document.Name, &status, &document.Reviewer, &document.FileName, &document.StoragePath, &document.UpdatedAt); err != nil {
+	if err := r.queryRow(ctx, `SELECT d.id, d.client_id, COALESCE(c.name, ''), d.name, d.status, d.reviewer, COALESCE(d.review_note, ''), COALESCE(d.file_name, ''), COALESCE(d.storage_path, ''), d.updated_at FROM documents d LEFT JOIN clients c ON c.id = d.client_id WHERE d.client_id = ? AND LOWER(d.name) = LOWER(?)`, clientID, name).Scan(&document.ID, &document.ClientID, &document.ClientName, &document.Name, &status, &document.Reviewer, &document.ReviewNote, &document.FileName, &document.StoragePath, &document.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Document{}, ErrNotFound
 		}
@@ -769,6 +1254,30 @@ func (r *SQLRepository) findTaskByID(ctx context.Context, id string) (Task, erro
 	}
 	task.Status = TaskStatus(status)
 	return task, nil
+}
+
+func (r *SQLRepository) findExpenseByID(ctx context.Context, id string) (Expense, error) {
+	var expense Expense
+	var status string
+	if err := r.queryRow(ctx, `SELECT e.id, e.staff_id, e.client_id, COALESCE(c.name, ''), e.need, e.category, e.amount, e.status, e.date_label, e.description, COALESCE(e.receipt_file_name, ''), COALESCE(e.receipt_storage_path, '') FROM expenses e LEFT JOIN clients c ON c.id = e.client_id WHERE e.id = ?`, id).Scan(&expense.ID, &expense.StaffID, &expense.ClientID, &expense.ClientName, &expense.Need, &expense.Category, &expense.Amount, &status, &expense.DateLabel, &expense.Description, &expense.ReceiptFileName, &expense.ReceiptStoragePath); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Expense{}, ErrNotFound
+		}
+		return Expense{}, err
+	}
+	expense.Status = ExpenseStatus(status)
+	return expense, nil
+}
+
+func (r *SQLRepository) findScheduleByID(ctx context.Context, id string) (ScheduleItem, error) {
+	var item ScheduleItem
+	if err := r.queryRow(ctx, `SELECT id, client_id, title, date_label, time_label, location, status, created_at FROM schedules WHERE id = ?`, id).Scan(&item.ID, &item.ClientID, &item.Title, &item.DateLabel, &item.TimeLabel, &item.Location, &item.Status, &item.CreatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ScheduleItem{}, ErrNotFound
+		}
+		return ScheduleItem{}, err
+	}
+	return item, nil
 }
 
 func (r *SQLRepository) ensureConversationAccess(ctx context.Context, viewer User, conversationID string) error {

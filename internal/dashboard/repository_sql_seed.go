@@ -260,6 +260,83 @@ func (r *SQLRepository) ensureStudentProgressDefaults(ctx context.Context) error
 	return nil
 }
 
+// defaultPipelineStages seeds the pipeline board with the stages this agency
+// used before stage management became configurable, so upgrading doesn't
+// change anyone's board. Owners/staff can rename, reorder, add, or delete
+// freely afterwards.
+func defaultPipelineStages() []string {
+	return []string{"Konsultasi", "Persiapan Dokumen", "Apply / Proses", "LOA", "Visa", "Keberangkatan", "Selesai"}
+}
+
+func defaultPipelineTones() []string {
+	return []string{"mint", "rose", "emerald", "sky", "violet", "lime", "amber"}
+}
+
+func (r *SQLRepository) ensurePipelineStagesSeeded(ctx context.Context) error {
+	var count int
+	if err := r.queryRow(ctx, `SELECT COUNT(*) FROM pipeline_stages`).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	now := time.Now()
+	names := defaultPipelineStages()
+	tones := defaultPipelineTones()
+	for i, name := range names {
+		if _, err := r.exec(ctx, `INSERT INTO pipeline_stages (id, name, position, tone, created_at) VALUES (?, ?, ?, ?, ?)`, newID("pstage"), name, i, tones[i%len(tones)], now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// defaultServicePackages seeds the price list this agency used before it
+// became owner-editable, so upgrading doesn't change what's on the page.
+func defaultServicePackages() []ServicePackage {
+	return []ServicePackage{
+		{
+			Name:        "Paket Profesional",
+			Category:    "Paket",
+			Description: "Full cover untuk universitas, dokumen, visa, dan keberangkatan.",
+			Price:       25000000,
+			Highlights:  "Checklist lengkap",
+		},
+		{
+			Name:        "Paket Basic",
+			Category:    "Paket",
+			Description: "Pendampingan inti untuk dokumen dan aplikasi kampus.",
+			Price:       15000000,
+			Highlights:  "Dokumen prioritas",
+		},
+		{
+			Name:        "Layanan Satuan",
+			Category:    "Satuan",
+			Description: "Visa, legalisir, translate, TOEFL, medical, dan apply terpisah.",
+			Price:       450000,
+			PriceIsFrom: true,
+			Highlights:  "Perlu tracking bukti\nApproval fleksibel",
+		},
+	}
+}
+
+func (r *SQLRepository) ensureServicePackagesSeeded(ctx context.Context) error {
+	var count int
+	if err := r.queryRow(ctx, `SELECT COUNT(*) FROM service_packages`).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	now := time.Now()
+	for i, pkg := range defaultServicePackages() {
+		if _, err := r.exec(ctx, `INSERT INTO service_packages (id, name, category, description, price, price_is_from, highlights, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, newID("svcpkg"), pkg.Name, pkg.Category, pkg.Description, pkg.Price, pkg.PriceIsFrom, pkg.Highlights, i, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func seedUser(id, username, password, name, email, phone string, role Role, now time.Time) (User, error) {
 	hash, err := security.HashPassword(password)
 	if err != nil {

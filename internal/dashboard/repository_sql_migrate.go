@@ -82,6 +82,7 @@ func postgresSchema() []string {
 		)`,
 		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_name VARCHAR(255) NOT NULL DEFAULT ''`,
 		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS storage_path TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS review_note TEXT NOT NULL DEFAULT ''`,
 		`CREATE TABLE IF NOT EXISTS progress_stages (
 			id VARCHAR(64) PRIMARY KEY,
 			client_id VARCHAR(64) NOT NULL,
@@ -122,8 +123,12 @@ func postgresSchema() []string {
 			amount BIGINT NOT NULL DEFAULT 0,
 			status VARCHAR(64) NOT NULL,
 			date_label VARCHAR(96) NOT NULL DEFAULT '',
-			description TEXT NOT NULL DEFAULT ''
+			description TEXT NOT NULL DEFAULT '',
+			receipt_file_name VARCHAR(255) NOT NULL DEFAULT '',
+			receipt_storage_path TEXT NOT NULL DEFAULT ''
 		)`,
+		`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS receipt_file_name VARCHAR(255) NOT NULL DEFAULT ''`,
+		`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS receipt_storage_path TEXT NOT NULL DEFAULT ''`,
 		`CREATE TABLE IF NOT EXISTS chat_conversations (
 			id VARCHAR(64) PRIMARY KEY,
 			client_id VARCHAR(64) NOT NULL,
@@ -136,6 +141,24 @@ func postgresSchema() []string {
 			conversation_id VARCHAR(64) NOT NULL,
 			sender_id VARCHAR(64) NOT NULL,
 			body TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS pipeline_stages (
+			id VARCHAR(64) PRIMARY KEY,
+			name VARCHAR(191) NOT NULL,
+			position INTEGER NOT NULL DEFAULT 0,
+			tone VARCHAR(32) NOT NULL DEFAULT 'mint',
+			created_at TIMESTAMPTZ NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS service_packages (
+			id VARCHAR(64) PRIMARY KEY,
+			name VARCHAR(191) NOT NULL,
+			category VARCHAR(96) NOT NULL DEFAULT '',
+			description TEXT NOT NULL DEFAULT '',
+			price BIGINT NOT NULL DEFAULT 0,
+			price_is_from BOOLEAN NOT NULL DEFAULT FALSE,
+			highlights TEXT NOT NULL DEFAULT '',
+			position INTEGER NOT NULL DEFAULT 0,
 			created_at TIMESTAMPTZ NOT NULL
 		)`,
 	}
@@ -199,6 +222,7 @@ func mysqlSchema() []string {
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_name VARCHAR(255) NOT NULL DEFAULT ''`,
 		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS storage_path VARCHAR(1024) NOT NULL DEFAULT ''`,
+		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS review_note TEXT NOT NULL DEFAULT ''`,
 		`CREATE TABLE IF NOT EXISTS progress_stages (
 			id VARCHAR(64) PRIMARY KEY,
 			client_id VARCHAR(64) NOT NULL,
@@ -239,8 +263,12 @@ func mysqlSchema() []string {
 			amount BIGINT NOT NULL DEFAULT 0,
 			status VARCHAR(64) NOT NULL,
 			date_label VARCHAR(96) NOT NULL DEFAULT '',
-			description TEXT NOT NULL
+			description TEXT NOT NULL,
+			receipt_file_name VARCHAR(255) NOT NULL DEFAULT '',
+			receipt_storage_path VARCHAR(1024) NOT NULL DEFAULT ''
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS receipt_file_name VARCHAR(255) NOT NULL DEFAULT ''`,
+		`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS receipt_storage_path VARCHAR(1024) NOT NULL DEFAULT ''`,
 		`CREATE TABLE IF NOT EXISTS chat_conversations (
 			id VARCHAR(64) PRIMARY KEY,
 			client_id VARCHAR(64) NOT NULL,
@@ -253,6 +281,24 @@ func mysqlSchema() []string {
 			conversation_id VARCHAR(64) NOT NULL,
 			sender_id VARCHAR(64) NOT NULL,
 			body TEXT NOT NULL,
+			created_at TIMESTAMP NOT NULL
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS pipeline_stages (
+			id VARCHAR(64) PRIMARY KEY,
+			name VARCHAR(191) NOT NULL,
+			position INT NOT NULL DEFAULT 0,
+			tone VARCHAR(32) NOT NULL DEFAULT 'mint',
+			created_at TIMESTAMP NOT NULL
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS service_packages (
+			id VARCHAR(64) PRIMARY KEY,
+			name VARCHAR(191) NOT NULL,
+			category VARCHAR(96) NOT NULL DEFAULT '',
+			description TEXT NOT NULL,
+			price BIGINT NOT NULL DEFAULT 0,
+			price_is_from BOOLEAN NOT NULL DEFAULT FALSE,
+			highlights TEXT NOT NULL,
+			position INT NOT NULL DEFAULT 0,
 			created_at TIMESTAMP NOT NULL
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 	}
