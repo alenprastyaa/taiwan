@@ -44,7 +44,7 @@ func renderInvoicePDF(appName string, order dashboard.Order) []byte {
 	pdf.SetXY(20, 29)
 	pdf.SetFont("Helvetica", "", 10)
 	gray()
-	pdf.CellFormat(100, 6, "Study Abroad Taiwan Consultant", "", 0, "L", false, 0, "")
+	pdf.CellFormat(100, 6, "Study Abroad Consultant", "", 0, "L", false, 0, "")
 	pdf.SetFont("Helvetica", "B", 11)
 	navy()
 	pdf.CellFormat(70, 6, "#"+order.Code, "", 0, "R", false, 0, "")

@@ -1,6 +1,6 @@
 {
-  "name": "Taiwan Education Consulting Dashboard",
-  "short_name": "TaiwanEC",
+  "name": "Formora Taiwan Dashboard",
+  "short_name": "Formora",
   "description": "Dashboard operasional owner, staff, dan client untuk layanan studi Taiwan.",
   "start_url": "/owner",
   "scope": "/",

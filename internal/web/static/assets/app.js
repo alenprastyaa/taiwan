@@ -21,6 +21,21 @@ function bindConfirmForms() {
   });
 }
 
+function bindCopyButtons() {
+  // Delegated clipboard copy for text-template "Salin Teks" buttons.
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-copy-text]");
+    if (!button) return;
+    navigator.clipboard.writeText(button.dataset.copyText).then(() => {
+      const original = button.textContent;
+      button.textContent = "Disalin!";
+      setTimeout(() => {
+        button.textContent = original;
+      }, 1500);
+    });
+  });
+}
+
 function closeSidebar() {
   document.body.classList.remove(sidebarOpenClass);
 }
@@ -258,6 +273,7 @@ document.addEventListener("DOMContentLoaded", () => {
   bindRejectModal();
   bindAutoSubmitSelects();
   bindConfirmForms();
+  bindCopyButtons();
   syncTitle();
   registerServiceWorker();
 });

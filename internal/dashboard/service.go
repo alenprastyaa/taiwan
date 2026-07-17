@@ -20,6 +20,12 @@ type Repository interface {
 	ListMessages(ctx context.Context, viewer User, conversationID string) ([]ChatMessage, error)
 	ListPipelineStages(ctx context.Context) ([]PipelineStage, error)
 	ListServicePackages(ctx context.Context) ([]ServicePackage, error)
+	ListStaff(ctx context.Context) ([]User, error)
+	ListTextTemplates(ctx context.Context) ([]TextTemplate, error)
+	ListInstitutionContacts(ctx context.Context) ([]InstitutionContact, error)
+	ListClientIntakeForms(ctx context.Context, viewer User, viewRole Role) ([]ClientIntakeForm, error)
+	ListActivityLog(ctx context.Context, viewer User, dateFilter string) ([]ActivityLog, error)
+	ListClientAgreements(ctx context.Context, viewer User, viewRole Role) ([]ClientAgreement, error)
 }
 
 type CompanySnapshot struct {
@@ -43,6 +49,7 @@ type ViewOptions struct {
 	ClientSearch     string
 	ShowCreateForm   bool
 	ShowStageManager bool
+	FilterDate       string
 }
 
 type Service struct {
@@ -107,9 +114,53 @@ func (s Service) View(ctx context.Context, appName, appURL string, viewer User, 
 				return ViewModel{}, fmt.Errorf("load pipeline stages: %w", err)
 			}
 		}
-		if role == RoleOwner && section == SectionServices {
+		if (role == RoleOwner && section == SectionServices) || ((role == RoleOwner || role == RoleStaff) && section == SectionClients) {
 			if vm.ServicePackages, err = s.repository.ListServicePackages(ctx); err != nil {
 				return ViewModel{}, fmt.Errorf("load service packages: %w", err)
+			}
+		}
+		if (role == RoleOwner || role == RoleStaff) && section == SectionClients {
+			if vm.Staff, err = s.repository.ListStaff(ctx); err != nil {
+				return ViewModel{}, fmt.Errorf("load staff: %w", err)
+			}
+		}
+		if (role == RoleOwner || role == RoleStaff) && section == SectionTemplates {
+			if vm.TextTemplates, err = s.repository.ListTextTemplates(ctx); err != nil {
+				return ViewModel{}, fmt.Errorf("load text templates: %w", err)
+			}
+		}
+		if (role == RoleOwner || role == RoleStaff) && section == SectionInstitutions {
+			if vm.InstitutionContacts, err = s.repository.ListInstitutionContacts(ctx); err != nil {
+				return ViewModel{}, fmt.Errorf("load institution contacts: %w", err)
+			}
+		}
+		if section == SectionIntake {
+			forms, err := s.repository.ListClientIntakeForms(ctx, viewer, role)
+			if err != nil {
+				return ViewModel{}, fmt.Errorf("load client intake forms: %w", err)
+			}
+			if role == RoleStudent {
+				if len(forms) > 0 {
+					vm.IntakeForm = forms[0]
+					vm.HasIntakeForm = true
+				}
+			} else {
+				vm.IntakeForms = forms
+			}
+		}
+		if (role == RoleOwner || role == RoleStaff) && section == SectionActivity {
+			if vm.ActivityLog, err = s.repository.ListActivityLog(ctx, viewer, options.FilterDate); err != nil {
+				return ViewModel{}, fmt.Errorf("load activity log: %w", err)
+			}
+		}
+		if role == RoleStudent && section == SectionAgreement {
+			agreements, err := s.repository.ListClientAgreements(ctx, viewer, role)
+			if err != nil {
+				return ViewModel{}, fmt.Errorf("load client agreement: %w", err)
+			}
+			if len(agreements) > 0 {
+				vm.Agreement = agreements[0]
+				vm.HasSignedAgreement = true
 			}
 		}
 		if section == SectionChat && vm.StudentFeatureAccess {
@@ -133,6 +184,7 @@ func (s Service) View(ctx context.Context, appName, appURL string, viewer User, 
 	vm.FilterSearch = options.ClientSearch
 	vm.ShowCreateForm = options.ShowCreateForm
 	vm.ShowStageManager = options.ShowStageManager
+	vm.FilterDate = options.FilterDate
 
 	vm.UserName = viewer.Name
 	vm.UserRole = viewer.Role.Label()
@@ -204,16 +256,18 @@ func validSection(role Role, section Section) bool {
 		RoleOwner: {
 			SectionDashboard: true, SectionFinance: true, SectionClients: true, SectionPipeline: true,
 			SectionServices: true, SectionReports: true, SectionSettings: true, SectionOrders: true,
-			SectionInvoices: true, SectionChat: true,
+			SectionInvoices: true, SectionChat: true, SectionTemplates: true, SectionInstitutions: true,
+			SectionIntake: true, SectionActivity: true,
 		},
 		RoleStaff: {
 			SectionDashboard: true, SectionClients: true, SectionPipeline: true, SectionTasks: true,
 			SectionDocuments: true, SectionExpenses: true, SectionCalendar: true, SectionChat: true,
-			SectionSettings: true,
+			SectionSettings: true, SectionTemplates: true, SectionInstitutions: true, SectionIntake: true,
+			SectionActivity: true,
 		},
 		RoleStudent: {
 			SectionDashboard: true, SectionProgress: true, SectionDocuments: true, SectionPayments: true,
-			SectionCalendar: true, SectionChat: true,
+			SectionCalendar: true, SectionChat: true, SectionIntake: true, SectionAgreement: true,
 		},
 	}
 	return allowed[role][section]
@@ -229,6 +283,10 @@ func navigation(role Role, active Section) []NavItem {
 			{Label: "Paket & Layanan", Href: "/owner/services", Icon: "package"},
 			{Label: "Invoice", Href: "/owner/invoices", Icon: "receipt"},
 			{Label: "Laporan", Href: "/owner/reports", Icon: "chart"},
+			{Label: "Template Teks", Href: "/owner/templates", Icon: "file"},
+			{Label: "Direktori Institusi", Href: "/owner/institutions", Icon: "users"},
+			{Label: "Data Client / Formulir", Href: "/owner/intake", Icon: "file"},
+			{Label: "Aktivitas Staff", Href: "/owner/activity", Icon: "chart"},
 			{Label: "Chat", Href: "/owner/chat", Icon: "chat"},
 			{Label: "Pengaturan", Href: "/owner/settings", Icon: "settings"},
 		},
@@ -240,6 +298,10 @@ func navigation(role Role, active Section) []NavItem {
 			{Label: "Dokumen", Href: "/staff/documents", Icon: "file"},
 			{Label: "Pengeluaran", Href: "/staff/expenses", Icon: "wallet"},
 			{Label: "Kalender", Href: "/staff/calendar", Icon: "calendar"},
+			{Label: "Template Teks", Href: "/staff/templates", Icon: "file"},
+			{Label: "Direktori Institusi", Href: "/staff/institutions", Icon: "users"},
+			{Label: "Data Client / Formulir", Href: "/staff/intake", Icon: "file"},
+			{Label: "Aktivitas Saya", Href: "/staff/activity", Icon: "chart"},
 			{Label: "Chat", Href: "/staff/chat", Icon: "chat"},
 			{Label: "Pengaturan", Href: "/staff/settings", Icon: "settings"},
 		},
@@ -247,6 +309,7 @@ func navigation(role Role, active Section) []NavItem {
 			{Label: "Dashboard", Href: "/student", Icon: "grid"},
 			{Label: "Progress Saya", Href: "/student/progress", Icon: "kanban"},
 			{Label: "Dokumen Saya", Href: "/student/documents", Icon: "file"},
+			{Label: "Formulir Data Diri", Href: "/student/intake", Icon: "file"},
 			{Label: "Pembayaran", Href: "/student/payments", Icon: "receipt"},
 			{Label: "Jadwal", Href: "/student/calendar", Icon: "calendar"},
 			{Label: "Chat Konsultan", Href: "/student/chat", Icon: "chat"},
@@ -277,6 +340,16 @@ func sectionFromHref(href string) Section {
 		return SectionInvoices
 	case "/owner/reports":
 		return SectionReports
+	case "/owner/templates", "/staff/templates":
+		return SectionTemplates
+	case "/owner/institutions", "/staff/institutions":
+		return SectionInstitutions
+	case "/owner/intake", "/staff/intake", "/student/intake":
+		return SectionIntake
+	case "/owner/activity", "/staff/activity":
+		return SectionActivity
+	case "/student/agreement":
+		return SectionAgreement
 	case "/owner/chat":
 		return SectionChat
 	case "/staff/tasks":
@@ -316,6 +389,14 @@ func pageCopy(role Role, section Section) (string, string, string) {
 			return "Invoice & Pembayaran", "Pantau tagihan, sisa pembayaran, dan follow up.", "Detail invoice dengan aksi kirim WhatsApp, email, download PDF, dan tandai lunas."
 		case SectionReports:
 			return "Laporan Keuangan", "Analisis pendapatan, pengeluaran, profit, dan piutang.", "Grafik serta ringkasan bulanan untuk ekspor PDF dan Excel."
+		case SectionTemplates:
+			return "Template Teks", "Kelola template jawaban untuk pertanyaan client yang berulang.", "Simpan, ubah, dan salin teks siap pakai untuk WhatsApp atau chat client."
+		case SectionInstitutions:
+			return "Direktori Institusi", "Kontak lembaga mitra untuk follow up cepat.", "Daftar penerjemah, legalisir, dan lembaga lain lengkap dengan nomor WhatsApp."
+		case SectionIntake:
+			return "Data Client / Formulir", "Rekap biodata client dari formulir pendaftaran.", "Data terisi otomatis saat client mengisi formulir sendiri, dapat diexport ke Excel."
+		case SectionActivity:
+			return "Aktivitas Staff", "Laporan tugas yang sudah dikerjakan staff hari ini.", "Rangkuman otomatis dari dokumen direview, invoice lunas, task selesai, dan pengeluaran dicatat, per staff per hari."
 		case SectionChat:
 			return "Chat Operasional", "Pantau percakapan staff dan client.", "Akses owner untuk memantau komunikasi dan eskalasi client."
 		case SectionSettings:
@@ -337,6 +418,14 @@ func pageCopy(role Role, section Section) (string, string, string) {
 			return "Pengeluaran Operasional", "Catat biaya untuk setiap berkas atau kebutuhan client.", "Input kategori, nominal, bukti, dan status approval tanpa melihat profit perusahaan."
 		case SectionCalendar:
 			return "Kalender", "Jadwal interview, medical, appointment, dan follow up.", "Agenda staff untuk memastikan tidak ada jadwal client yang terlewat."
+		case SectionTemplates:
+			return "Template Teks", "Template jawaban untuk pertanyaan client yang berulang.", "Simpan, ubah, dan salin teks siap pakai untuk WhatsApp atau chat client."
+		case SectionInstitutions:
+			return "Direktori Institusi", "Kontak lembaga mitra untuk follow up cepat.", "Daftar penerjemah, legalisir, dan lembaga lain lengkap dengan nomor WhatsApp."
+		case SectionIntake:
+			return "Data Client / Formulir", "Rekap biodata client dari formulir pendaftaran.", "Data terisi otomatis saat client mengisi formulir sendiri, dapat diexport ke Excel."
+		case SectionActivity:
+			return "Aktivitas Saya", "Laporan tugas yang sudah kamu kerjakan hari ini.", "Rangkuman otomatis dari dokumen direview, task selesai, dan pengeluaran dicatat, ditambah catatan manual."
 		case SectionChat:
 			return "Chat Klien", "Percakapan prioritas dengan client aktif.", "Akses cepat ke pesan yang butuh balasan staff."
 		case SectionSettings:
@@ -350,6 +439,10 @@ func pageCopy(role Role, section Section) (string, string, string) {
 			return "Progress Saya", "Lihat posisi proses dan estimasi selesai.", "Progress bar setiap tahapan mulai konsultasi sampai keberangkatan."
 		case SectionDocuments:
 			return "Dokumen Saya", "Upload dan pantau status review dokumen.", "Passport, ijazah, transkrip, foto, KTP, KK, akta, autobiografi, dan mutasi rekening."
+		case SectionIntake:
+			return "Formulir Data Diri", "Lengkapi biodata untuk proses pendaftaran.", "Data ini digunakan tim untuk keperluan aplikasi kampus dan visa."
+		case SectionAgreement:
+			return "Surat Perjanjian", "Baca dan setujui perjanjian kerjasama layanan.", "Persetujuan ini diperlukan sebelum kamu bisa mengakses fitur lain."
 		case SectionPayments:
 			return "Pembayaran", "Invoice, total tagihan, sisa tagihan, dan bukti bayar.", "Download invoice dan upload bukti pembayaran untuk diverifikasi."
 		case SectionCalendar:

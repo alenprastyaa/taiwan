@@ -161,6 +161,67 @@ func postgresSchema() []string {
 			position INTEGER NOT NULL DEFAULT 0,
 			created_at TIMESTAMPTZ NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS text_templates (
+			id VARCHAR(64) PRIMARY KEY,
+			title VARCHAR(191) NOT NULL,
+			body TEXT NOT NULL DEFAULT '',
+			category VARCHAR(96) NOT NULL DEFAULT '',
+			position INTEGER NOT NULL DEFAULT 0,
+			created_at TIMESTAMPTZ NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS institution_contacts (
+			id VARCHAR(64) PRIMARY KEY,
+			name VARCHAR(191) NOT NULL,
+			category VARCHAR(96) NOT NULL DEFAULT '',
+			phone VARCHAR(64) NOT NULL DEFAULT '',
+			notes TEXT NOT NULL DEFAULT '',
+			position INTEGER NOT NULL DEFAULT 0,
+			created_at TIMESTAMPTZ NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS client_intake_forms (
+			id VARCHAR(64) PRIMARY KEY,
+			client_id VARCHAR(64) NOT NULL UNIQUE,
+			email VARCHAR(191) NOT NULL DEFAULT '',
+			full_name_en VARCHAR(191) NOT NULL DEFAULT '',
+			gender VARCHAR(16) NOT NULL DEFAULT '',
+			date_of_birth VARCHAR(32) NOT NULL DEFAULT '',
+			place_of_birth VARCHAR(191) NOT NULL DEFAULT '',
+			passport_number VARCHAR(64) NOT NULL DEFAULT '',
+			phone_number VARCHAR(64) NOT NULL DEFAULT '',
+			address TEXT NOT NULL DEFAULT '',
+			postal_code VARCHAR(32) NOT NULL DEFAULT '',
+			father_name VARCHAR(191) NOT NULL DEFAULT '',
+			father_dob VARCHAR(32) NOT NULL DEFAULT '',
+			father_phone VARCHAR(64) NOT NULL DEFAULT '',
+			mother_name VARCHAR(191) NOT NULL DEFAULT '',
+			mother_dob VARCHAR(32) NOT NULL DEFAULT '',
+			mother_phone VARCHAR(64) NOT NULL DEFAULT '',
+			school_name VARCHAR(191) NOT NULL DEFAULT '',
+			school_location VARCHAR(191) NOT NULL DEFAULT '',
+			dates_enrolled VARCHAR(64) NOT NULL DEFAULT '',
+			dates_graduate VARCHAR(64) NOT NULL DEFAULT '',
+			social_media_ig VARCHAR(191) NOT NULL DEFAULT '',
+			submitted_at TIMESTAMPTZ NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS activity_log (
+			id VARCHAR(64) PRIMARY KEY,
+			staff_id VARCHAR(64) NOT NULL,
+			client_id VARCHAR(64) NOT NULL DEFAULT '',
+			action_type VARCHAR(64) NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS client_agreements (
+			id VARCHAR(64) PRIMARY KEY,
+			client_id VARCHAR(64) NOT NULL UNIQUE,
+			agreement_version VARCHAR(32) NOT NULL DEFAULT 'v1',
+			agreement_text TEXT NOT NULL DEFAULT '',
+			full_name_typed VARCHAR(191) NOT NULL,
+			agreed_at TIMESTAMPTZ NOT NULL,
+			ip_address VARCHAR(64) NOT NULL DEFAULT '',
+			user_agent VARCHAR(255) NOT NULL DEFAULT ''
+		)`,
 	}
 }
 
@@ -300,6 +361,69 @@ func mysqlSchema() []string {
 			highlights TEXT NOT NULL,
 			position INT NOT NULL DEFAULT 0,
 			created_at TIMESTAMP NOT NULL
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS text_templates (
+			id VARCHAR(64) PRIMARY KEY,
+			title VARCHAR(191) NOT NULL,
+			body TEXT NOT NULL,
+			category VARCHAR(96) NOT NULL DEFAULT '',
+			position INT NOT NULL DEFAULT 0,
+			created_at TIMESTAMP NOT NULL
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS institution_contacts (
+			id VARCHAR(64) PRIMARY KEY,
+			name VARCHAR(191) NOT NULL,
+			category VARCHAR(96) NOT NULL DEFAULT '',
+			phone VARCHAR(64) NOT NULL DEFAULT '',
+			notes TEXT NOT NULL,
+			position INT NOT NULL DEFAULT 0,
+			created_at TIMESTAMP NOT NULL
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS client_intake_forms (
+			id VARCHAR(64) PRIMARY KEY,
+			client_id VARCHAR(64) NOT NULL,
+			email VARCHAR(191) NOT NULL DEFAULT '',
+			full_name_en VARCHAR(191) NOT NULL DEFAULT '',
+			gender VARCHAR(16) NOT NULL DEFAULT '',
+			date_of_birth VARCHAR(32) NOT NULL DEFAULT '',
+			place_of_birth VARCHAR(191) NOT NULL DEFAULT '',
+			passport_number VARCHAR(64) NOT NULL DEFAULT '',
+			phone_number VARCHAR(64) NOT NULL DEFAULT '',
+			address TEXT NOT NULL,
+			postal_code VARCHAR(32) NOT NULL DEFAULT '',
+			father_name VARCHAR(191) NOT NULL DEFAULT '',
+			father_dob VARCHAR(32) NOT NULL DEFAULT '',
+			father_phone VARCHAR(64) NOT NULL DEFAULT '',
+			mother_name VARCHAR(191) NOT NULL DEFAULT '',
+			mother_dob VARCHAR(32) NOT NULL DEFAULT '',
+			mother_phone VARCHAR(64) NOT NULL DEFAULT '',
+			school_name VARCHAR(191) NOT NULL DEFAULT '',
+			school_location VARCHAR(191) NOT NULL DEFAULT '',
+			dates_enrolled VARCHAR(64) NOT NULL DEFAULT '',
+			dates_graduate VARCHAR(64) NOT NULL DEFAULT '',
+			social_media_ig VARCHAR(191) NOT NULL DEFAULT '',
+			submitted_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL,
+			UNIQUE KEY client_intake_forms_client_unique (client_id)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS activity_log (
+			id VARCHAR(64) PRIMARY KEY,
+			staff_id VARCHAR(64) NOT NULL,
+			client_id VARCHAR(64) NOT NULL DEFAULT '',
+			action_type VARCHAR(64) NOT NULL,
+			description TEXT NOT NULL,
+			created_at TIMESTAMP NOT NULL
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS client_agreements (
+			id VARCHAR(64) PRIMARY KEY,
+			client_id VARCHAR(64) NOT NULL,
+			agreement_version VARCHAR(32) NOT NULL DEFAULT 'v1',
+			agreement_text TEXT NOT NULL,
+			full_name_typed VARCHAR(191) NOT NULL,
+			agreed_at TIMESTAMP NOT NULL,
+			ip_address VARCHAR(64) NOT NULL DEFAULT '',
+			user_agent VARCHAR(255) NOT NULL DEFAULT '',
+			UNIQUE KEY client_agreements_client_unique (client_id)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 	}
 }

@@ -15,7 +15,7 @@ import (
 	"github.com/a-h/templ"
 )
 
-const assetVersion = "20260716-dynamic-packages"
+const assetVersion = "20260717-button-fix"
 
 func Document(vm dashboard.ViewModel) templ.Component {
 	return templ.ComponentFunc(func(_ context.Context, w io.Writer) error {
@@ -35,7 +35,7 @@ func documentHTML(vm dashboard.ViewModel) string {
 	canonical := vm.AppURL + vm.Path()
 	description := vm.Description
 	if description == "" {
-		description = "Dashboard operasional Taiwan Education Consulting untuk owner, staff, dan client."
+		description = "Dashboard operasional Formora Taiwan untuk owner, staff, dan client."
 	}
 
 	var b strings.Builder
@@ -99,7 +99,7 @@ func appHTML(vm dashboard.ViewModel) string {
 func sidebarHTML(vm dashboard.ViewModel) string {
 	var b strings.Builder
 	b.WriteString(`<aside class="sidebar" data-sidebar>`)
-	b.WriteString(`<div class="brand-block"><div class="brand-mark" aria-hidden="true"><span></span></div><div><p class="brand-title">TAIWAN</p><p class="brand-subtitle">Education Consulting</p><p class="brand-note">Study Abroad Taiwan</p></div></div>`)
+	b.WriteString(`<div class="brand-block"><div class="brand-mark" aria-hidden="true"><span></span></div><div><p class="brand-title">FORMORA</p><p class="brand-subtitle">Taiwan</p><p class="brand-note">Study Abroad Taiwan</p></div></div>`)
 	if vm.Role != dashboard.RoleStudent {
 		b.WriteString(`<div class="px-4 pb-4"><span class="role-badge ` + attr(vm.RoleBadgeClass) + `">` + esc(vm.RoleBadge) + `</span></div>`)
 	}
@@ -119,7 +119,7 @@ func sidebarHTML(vm dashboard.ViewModel) string {
 	}
 	b.WriteString(`</nav>`)
 	b.WriteString(`<div class="sidebar-help"><p class="text-sm font-semibold text-white">Butuh Bantuan?</p><p class="mt-1 text-xs text-slate-400">Hubungi tim support kami.</p><a href="/` + attr(vm.Role.String()) + `/chat" class="help-button" hx-get="/` + attr(vm.Role.String()) + `/chat" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Hubungi Sekarang</a></div>`)
-	b.WriteString(`<p class="sidebar-footnote">&copy; 2026 Taiwan Education Consulting<br>v1.0.0</p>`)
+	b.WriteString(`<p class="sidebar-footnote">&copy; 2026 Formora Taiwan<br>v1.0.0</p>`)
 	b.WriteString(`</aside>`)
 	return b.String()
 }
@@ -191,6 +191,14 @@ func ownerContent(vm dashboard.ViewModel) string {
 		return ownerInvoices(vm)
 	case dashboard.SectionReports:
 		return ownerReports(vm)
+	case dashboard.SectionTemplates:
+		return templatesPanel(vm)
+	case dashboard.SectionInstitutions:
+		return institutionsPanel(vm)
+	case dashboard.SectionIntake:
+		return ownerIntakeTable(vm)
+	case dashboard.SectionActivity:
+		return ownerActivity(vm)
 	case dashboard.SectionChat:
 		return chatPanel(vm, "Chat Operasional")
 	case dashboard.SectionSettings:
@@ -214,6 +222,14 @@ func staffContent(vm dashboard.ViewModel) string {
 		return staffExpenses(vm)
 	case dashboard.SectionCalendar:
 		return calendarPanel(vm, "Jadwal Staff")
+	case dashboard.SectionTemplates:
+		return templatesPanel(vm)
+	case dashboard.SectionInstitutions:
+		return institutionsPanel(vm)
+	case dashboard.SectionIntake:
+		return ownerIntakeTable(vm)
+	case dashboard.SectionActivity:
+		return staffActivity(vm)
 	case dashboard.SectionChat:
 		return chatPanel(vm, "Chat Klien")
 	case dashboard.SectionSettings:
@@ -229,6 +245,10 @@ func studentContent(vm dashboard.ViewModel) string {
 		return studentProgress(vm)
 	case dashboard.SectionDocuments:
 		return studentDocuments(vm)
+	case dashboard.SectionIntake:
+		return studentIntakeForm(vm)
+	case dashboard.SectionAgreement:
+		return studentAgreementPage(vm)
 	case dashboard.SectionPayments:
 		return studentPayments(vm)
 	case dashboard.SectionCalendar:
@@ -398,13 +418,27 @@ func clientsPanel(vm dashboard.ViewModel, includeStaffFilter bool) string {
 
 	var rows strings.Builder
 	for i, client := range clients {
-		rows.WriteString(`<tr><td>` + intText(i+1) + `</td><td><strong>` + esc(client.Name) + `</strong><span>` + esc(client.Email) + `</span></td><td>` + esc(client.PackageName) + `</td><td>` + esc(client.PICName) + `</td><td>` + esc(client.Status) + `</td><td><span class="progress-line"><i style="width:` + percentStyle(client.Progress) + `"></i></span>` + intText(client.Progress) + `%</td><td>` + esc(client.LastSchedule) + `</td><td><a class="icon-action" href="/` + attr(vm.Role.String()) + `/chat" hx-get="/` + attr(vm.Role.String()) + `/chat" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Chat</a></td></tr>`)
+		rows.WriteString(`<tr><td>` + intText(i+1) + `</td><td><strong>` + esc(client.Name) + `</strong><span>` + esc(client.Email) + `</span></td><td>` + esc(client.PackageName) + `</td><td>` + esc(client.PICName) + `</td><td>` + esc(client.Status) + `</td><td><span class="progress-line"><i style="width:` + percentStyle(client.Progress) + `"></i></span>` + intText(client.Progress) + `%</td><td>` + esc(client.LastSchedule) + `</td><td><a class="icon-action" href="/` + attr(vm.Role.String()) + `/chat" hx-get="/` + attr(vm.Role.String()) + `/chat" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Chat</a> <a class="icon-action" href="/` + attr(vm.Role.String()) + `/clients/` + attr(client.ID) + `/agreement.pdf">Perjanjian</a></td></tr>`)
 	}
 	if rows.Len() == 0 {
 		rows.WriteString(`<tr><td colspan="8">Belum ada client yang cocok dengan filter ini.</td></tr>`)
 	}
+	addForm := ""
+	if vm.ShowCreateForm {
+		var packageOptions strings.Builder
+		for _, pkg := range vm.ServicePackages {
+			packageOptions.WriteString(`<option value="` + attr(pkg.Name) + `">` + esc(pkg.Name) + `</option>`)
+		}
+		var staffOptions strings.Builder
+		for _, staff := range vm.Staff {
+			staffOptions.WriteString(`<option value="` + attr(staff.ID) + `">` + esc(staff.Name) + `</option>`)
+		}
+		addForm = `<form method="post" action="` + attr(path) + `/create" class="student-upload-form"><label>Nama Lengkap<input name="name" required placeholder="Nama client"></label><label>Username<input name="username" required placeholder="Untuk login client"></label><label>Password<input name="password" type="password" minlength="8" required placeholder="Minimal 8 karakter"></label><label>Email<input name="email" type="email" placeholder="client@email.com"></label><label>No. WhatsApp<input name="phone" placeholder="08xxxxxxxxxx"></label><label>Paket<select name="package_name"><option value="">Belum dipilih</option>` + packageOptions.String() + `</select></label><label>Negara<input name="country" placeholder="Taiwan"></label><label>Kampus<input name="campus" placeholder="Nama kampus"></label><label>PIC Staff<select name="pic_staff_id"><option value="">Otomatis</option>` + staffOptions.String() + `</select></label><button class="primary-button" type="submit">Simpan Client</button></form>`
+	}
 	return `
 <div class="panel table-panel">
+  <div class="panel-head"><h2>Data Client</h2>` + toggleFormButton(vm.ShowCreateForm, "+ Tambah Client", path) + `</div>
+  ` + addForm + `
   <form method="get" action="` + attr(path) + `" hx-get="` + attr(path) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true" class="toolbar-row mb-4"><label class="search-box wide">` + toolIconHTML("search") + `<input type="search" name="q" value="` + attr(vm.FilterSearch) + `" placeholder="Cari nama atau email" aria-label="Cari client"></label><div class="filter-group">` + filterFields + `<button class="outline-button" type="submit">Terapkan</button><a class="outline-button" href="` + attr(path) + `" hx-get="` + attr(path) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Reset</a><a class="primary-button" href="` + attr(path) + `/export">Export</a></div></form>
   <table class="data-table"><thead><tr><th>No.</th><th>Nama Klien</th><th>Paket / Layanan</th><th>PIC</th><th>Status Terakhir</th><th>Progress</th><th>Jadwal Terakhir</th><th>Aksi</th></tr></thead><tbody>
   ` + rows.String() + `</tbody></table>
@@ -631,7 +665,7 @@ func ownerInvoices(vm dashboard.ViewModel) string {
 	}
 	statusClass := orderStatusClass(active.Status)
 	client := findClientByID(vm.Clients, active.ClientID)
-	waHref := waLink(client.Phone, "Halo "+active.ClientName+", ini invoice "+active.Code+" sebesar "+money(active.Total)+" dari Taiwan Education Consulting.")
+	waHref := waLink(client.Phone, "Halo "+active.ClientName+", ini invoice "+active.Code+" sebesar "+money(active.Total)+" dari Formora Taiwan.")
 	mailHref := mailtoLink(client.Email, "Invoice "+active.Code, "Halo "+active.ClientName+",\n\nBerikut invoice "+active.Code+" sebesar "+money(active.Total)+".\n\nTerima kasih.")
 	pdfHref := "/owner/invoices/" + url.QueryEscape(active.Code) + "/invoice.pdf"
 	commActions := `<div class="action-stack"><a class="success-button" href="` + attr(waHref) + `" target="_blank" rel="noopener">Kirim Invoice (WA)</a><a class="primary-button" href="` + attr(mailHref) + `">Kirim Invoice (Email)</a><a class="outline-button" href="` + attr(pdfHref) + `">Download PDF</a></div>`

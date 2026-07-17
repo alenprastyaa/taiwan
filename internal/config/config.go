@@ -56,7 +56,7 @@ func Load(paths ...string) (Config, error) {
 
 	cfg := Config{
 		App: AppConfig{
-			Name: env("APP_NAME", "Taiwan Education Consulting"),
+			Name: env("APP_NAME", "Formora Taiwan"),
 			Env:  env("APP_ENV", "development"),
 			URL:  strings.TrimRight(env("APP_URL", "http://localhost:8080"), "/"),
 		},

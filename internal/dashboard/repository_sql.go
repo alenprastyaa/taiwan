@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -64,6 +65,12 @@ func NewSQLRepository(ctx context.Context, db *sql.DB, driver string, opts SQLRe
 		return nil, err
 	}
 	if err := repo.ensureServicePackagesSeeded(ctx); err != nil {
+		return nil, err
+	}
+	if err := repo.ensureTextTemplatesSeeded(ctx); err != nil {
+		return nil, err
+	}
+	if err := repo.ensureInstitutionContactsSeeded(ctx); err != nil {
 		return nil, err
 	}
 	return repo, nil
@@ -162,6 +169,24 @@ func (r *SQLRepository) CreateStudent(ctx context.Context, input CreateStudentIn
 	if err != nil {
 		return User{}, fmt.Errorf("load default staff: %w", err)
 	}
+	if picID := strings.TrimSpace(input.PICStaffID); picID != "" {
+		if picked, err := r.findStaffByID(ctx, picID); err == nil {
+			staff = picked
+		}
+	}
+
+	packageName := strings.TrimSpace(input.PackageName)
+	if packageName == "" {
+		packageName = "Belum memilih paket"
+	}
+	country := strings.TrimSpace(input.Country)
+	if country == "" {
+		country = "Taiwan"
+	}
+	campus := strings.TrimSpace(input.Campus)
+	if campus == "" {
+		campus = "Belum dipilih"
+	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -187,9 +212,9 @@ func (r *SQLRepository) CreateStudent(ctx context.Context, input CreateStudentIn
 		Name:         user.Name,
 		Email:        user.Email,
 		Phone:        user.Phone,
-		Country:      "Taiwan",
-		Campus:       "Belum dipilih",
-		PackageName:  "Belum memilih paket",
+		Country:      country,
+		Campus:       campus,
+		PackageName:  packageName,
 		PICStaffID:   staff.ID,
 		PICName:      staff.Name,
 		Status:       "Registrasi",
@@ -215,6 +240,9 @@ func (r *SQLRepository) CreateStudent(ctx context.Context, input CreateStudentIn
 		return User{}, err
 	}
 	if _, err := r.txExec(ctx, tx, `INSERT INTO progress_stages (id, client_id, step, title, description, status, progress, due_label, pic_name, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, newID("stage"), client.ID, 1, "Registrasi akun", "Akun client sudah dibuat dan menunggu pemilihan paket serta jadwal konsultasi.", ProgressStageActive, client.Progress, "-", staff.Name, now); err != nil {
+		return User{}, err
+	}
+	if _, err := r.txExec(ctx, tx, `INSERT INTO activity_log (id, staff_id, client_id, action_type, description, created_at) VALUES (?, ?, ?, ?, ?, ?)`, newID("activity"), staff.ID, client.ID, "client_created", "Client baru ditambahkan: "+client.Name, now); err != nil {
 		return User{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -476,7 +504,12 @@ func (r *SQLRepository) MarkOrderPaidByCode(ctx context.Context, viewer User, co
 	if affected, _ := result.RowsAffected(); affected == 0 {
 		return Order{}, ErrNotFound
 	}
-	return r.findOrderByCode(ctx, normalized)
+	order, err := r.findOrderByCode(ctx, normalized)
+	if err != nil {
+		return Order{}, err
+	}
+	r.logActivity(ctx, viewer.ID, order.ClientID, "order_marked_paid", "Order "+order.Code+" ditandai lunas")
+	return order, nil
 }
 
 func (r *SQLRepository) SubmitPaymentProof(ctx context.Context, viewer User, code, note, fileName, storagePath string) (Order, error) {
@@ -597,7 +630,12 @@ func (r *SQLRepository) ReviewDocument(ctx context.Context, viewer User, documen
 	if _, err := r.exec(ctx, `UPDATE documents SET status = ?, reviewer = ?, review_note = ?, updated_at = ? WHERE id = ?`, status, viewer.Name, note, now, documentID); err != nil {
 		return Document{}, err
 	}
-	return r.findDocumentByID(ctx, documentID)
+	updated, err := r.findDocumentByID(ctx, documentID)
+	if err != nil {
+		return Document{}, err
+	}
+	r.logActivity(ctx, viewer.ID, updated.ClientID, "document_reviewed", "Dokumen "+updated.Name+" -> "+string(updated.Status))
+	return updated, nil
 }
 
 func (r *SQLRepository) CompleteTask(ctx context.Context, viewer User, taskID string) (Task, error) {
@@ -614,7 +652,12 @@ func (r *SQLRepository) CompleteTask(ctx context.Context, viewer User, taskID st
 	if _, err := r.exec(ctx, `UPDATE tasks SET status = ? WHERE id = ?`, TaskDone, taskID); err != nil {
 		return Task{}, err
 	}
-	return r.findTaskByID(ctx, taskID)
+	updated, err := r.findTaskByID(ctx, taskID)
+	if err != nil {
+		return Task{}, err
+	}
+	r.logActivity(ctx, viewer.ID, updated.ClientID, "task_completed", "Task selesai: "+updated.Title)
+	return updated, nil
 }
 
 func (r *SQLRepository) CreateTask(ctx context.Context, viewer User, input CreateTaskInput) (Task, error) {
@@ -686,7 +729,12 @@ func (r *SQLRepository) CreateExpense(ctx context.Context, viewer User, input Cr
 	if _, err := r.exec(ctx, `INSERT INTO expenses (id, staff_id, client_id, need, category, amount, status, date_label, description, receipt_file_name, receipt_storage_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, staffID, client.ID, need, category, input.Amount, status, dateLabel, strings.TrimSpace(input.Description), strings.TrimSpace(input.FileName), strings.TrimSpace(input.StoragePath)); err != nil {
 		return Expense{}, err
 	}
-	return r.findExpenseByID(ctx, id)
+	expense, err := r.findExpenseByID(ctx, id)
+	if err != nil {
+		return Expense{}, err
+	}
+	r.logActivity(ctx, viewer.ID, client.ID, "expense_recorded", need+" - Rp"+strconv.FormatInt(input.Amount, 10))
+	return expense, nil
 }
 
 func (r *SQLRepository) CreateSchedule(ctx context.Context, viewer User, input CreateScheduleInput) (ScheduleItem, error) {

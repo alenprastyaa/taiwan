@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,7 +15,6 @@ import (
 	"time"
 
 	"university_agency/internal/auth"
-	"university_agency/internal/config"
 	"university_agency/internal/dashboard"
 	"university_agency/internal/security"
 	"university_agency/internal/ui"
@@ -24,50 +22,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
-
-type Dependencies struct {
-	Config    config.Config
-	Logger    *slog.Logger
-	Dashboard dashboard.Service
-	Store     Store
-	Sessions  *auth.SessionStore
-}
-
-type Store interface {
-	dashboard.Repository
-	FindUserByUsername(ctx context.Context, username string) (dashboard.User, error)
-	FindUserByID(ctx context.Context, id string) (dashboard.User, error)
-	CreateStudent(ctx context.Context, input dashboard.CreateStudentInput) (dashboard.User, error)
-	MarkOrderPaidByCode(ctx context.Context, viewer dashboard.User, code string) (dashboard.Order, error)
-	SubmitPaymentProof(ctx context.Context, viewer dashboard.User, code, note, fileName, storagePath string) (dashboard.Order, error)
-	StudentHasPaymentAccess(ctx context.Context, viewer dashboard.User) (bool, error)
-	UploadStudentDocument(ctx context.Context, viewer dashboard.User, documentName, fileName, storagePath string) (dashboard.Document, error)
-	ReviewDocument(ctx context.Context, viewer dashboard.User, documentID string, status dashboard.DocumentStatus, note string) (dashboard.Document, error)
-	CompleteTask(ctx context.Context, viewer dashboard.User, taskID string) (dashboard.Task, error)
-	SaveMessage(ctx context.Context, viewer dashboard.User, conversationID, body string) (dashboard.ChatMessage, error)
-	CreateTask(ctx context.Context, viewer dashboard.User, input dashboard.CreateTaskInput) (dashboard.Task, error)
-	CreateExpense(ctx context.Context, viewer dashboard.User, input dashboard.CreateExpenseInput) (dashboard.Expense, error)
-	CreateSchedule(ctx context.Context, viewer dashboard.User, input dashboard.CreateScheduleInput) (dashboard.ScheduleItem, error)
-	BulkApproveDocuments(ctx context.Context, viewer dashboard.User) (int, error)
-	CreatePipelineStage(ctx context.Context, viewer dashboard.User, name string) (dashboard.PipelineStage, error)
-	RenamePipelineStage(ctx context.Context, viewer dashboard.User, stageID, name string) (dashboard.PipelineStage, error)
-	DeletePipelineStage(ctx context.Context, viewer dashboard.User, stageID string) error
-	ReorderPipelineStage(ctx context.Context, viewer dashboard.User, stageID, direction string) error
-	UpdateClientStage(ctx context.Context, viewer dashboard.User, clientID, stageName string) (dashboard.ClientProfile, error)
-	CreateServicePackage(ctx context.Context, viewer dashboard.User, input dashboard.ServicePackageInput) (dashboard.ServicePackage, error)
-	UpdateServicePackage(ctx context.Context, viewer dashboard.User, packageID string, input dashboard.ServicePackageInput) (dashboard.ServicePackage, error)
-	DeleteServicePackage(ctx context.Context, viewer dashboard.User, packageID string) error
-	ReorderServicePackage(ctx context.Context, viewer dashboard.User, packageID, direction string) error
-}
-
-type Handler struct {
-	cfg       config.Config
-	logger    *slog.Logger
-	dashboard dashboard.Service
-	store     Store
-	sessions  *auth.SessionStore
-	chatHub   *ChatHub
-}
 
 func NewRouter(deps Dependencies) http.Handler {
 	h := Handler{
@@ -122,6 +76,8 @@ func NewRouter(deps Dependencies) http.Handler {
 		r.Post("/staff/calendar/create", h.createSchedule)
 		r.Get("/owner/clients/export", h.exportClients)
 		r.Get("/staff/clients/export", h.exportClients)
+		r.Post("/owner/clients/create", h.createClient)
+		r.Post("/staff/clients/create", h.createClient)
 		r.Get("/owner/finance/export", h.exportFinance)
 		r.Get("/owner/reports/export", h.exportFinance)
 		r.Post("/pipeline/stages/create", h.createPipelineStage)
@@ -133,6 +89,22 @@ func NewRouter(deps Dependencies) http.Handler {
 		r.Post("/owner/services/{packageID}/update", h.updateServicePackage)
 		r.Post("/owner/services/{packageID}/delete", h.deleteServicePackage)
 		r.Post("/owner/services/{packageID}/move", h.moveServicePackage)
+		r.Post("/templates/create", h.createTextTemplate)
+		r.Post("/templates/{templateID}/update", h.updateTextTemplate)
+		r.Post("/templates/{templateID}/delete", h.deleteTextTemplate)
+		r.Post("/templates/{templateID}/move", h.moveTextTemplate)
+		r.Post("/institutions/create", h.createInstitutionContact)
+		r.Post("/institutions/{contactID}/update", h.updateInstitutionContact)
+		r.Post("/institutions/{contactID}/delete", h.deleteInstitutionContact)
+		r.Post("/institutions/{contactID}/move", h.moveInstitutionContact)
+		r.Post("/student/intake/save", h.saveClientIntakeForm)
+		r.Get("/owner/intake/export", h.exportClientIntakeForms)
+		r.Get("/staff/intake/export", h.exportClientIntakeForms)
+		r.Post("/activity/notes/create", h.createActivityNote)
+		r.Post("/student/agreement/sign", h.signAgreement)
+		r.Get("/student/agreement/pdf", h.downloadOwnAgreementPDF)
+		r.Get("/owner/clients/{clientID}/agreement.pdf", h.downloadClientAgreementPDF)
+		r.Get("/staff/clients/{clientID}/agreement.pdf", h.downloadClientAgreementPDF)
 		r.Post("/chat/{conversationID}/messages", h.postChatMessage)
 		r.Get("/ws/chat/{conversationID}", h.chatWebSocket)
 		r.Get("/client", h.clientAlias)
@@ -169,6 +141,21 @@ func (h Handler) page(w http.ResponseWriter, r *http.Request) {
 	}
 
 	section := dashboard.ParseSection(strings.ToLower(chi.URLParam(r, "section")))
+
+	// Agreement gate: keyed off the viewer's own role, not the URL role param,
+	// so an owner/staff impersonate-viewing /student/... (allowed via
+	// CanViewRole) is never redirected — only an actual logged-in student
+	// hitting their own pages is gated. The section exemption below prevents
+	// a redirect loop on the gate page itself.
+	viewer := currentUser(r)
+	if viewer.Role == dashboard.RoleStudent && section != dashboard.SectionAgreement {
+		signed, err := h.store.HasSignedAgreement(r.Context(), viewer)
+		if err == nil && !signed {
+			http.Redirect(w, r, "/student/agreement", http.StatusFound)
+			return
+		}
+	}
+
 	vm, err := h.dashboard.View(r.Context(), h.cfg.App.Name, h.cfg.App.URL, currentUser(r), role, section, dashboard.ViewOptions{
 		ConversationID:   r.URL.Query().Get("conversation"),
 		Flash:            r.URL.Query().Get("notice"),
@@ -180,6 +167,7 @@ func (h Handler) page(w http.ResponseWriter, r *http.Request) {
 		ClientSearch:     r.URL.Query().Get("q"),
 		ShowCreateForm:   r.URL.Query().Get("new") == "1",
 		ShowStageManager: r.URL.Query().Get("manage") == "1",
+		FilterDate:       r.URL.Query().Get("date"),
 	})
 	if err != nil {
 		if errors.Is(err, dashboard.ErrForbidden) {
@@ -326,6 +314,9 @@ func (h Handler) markOrderPaid(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) submitPaymentProof(w http.ResponseWriter, r *http.Request) {
+	if !h.requireSignedAgreement(w, r) {
+		return
+	}
 	if err := r.ParseMultipartForm(10 << 20); err != nil && err != http.ErrNotMultipart {
 		http.Redirect(w, r, "/student/payments?notice="+url.QueryEscape("Bukti bayar tidak valid."), http.StatusSeeOther)
 		return
@@ -356,6 +347,9 @@ func (h Handler) submitPaymentProof(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) uploadStudentDocument(w http.ResponseWriter, r *http.Request) {
+	if !h.requireSignedAgreement(w, r) {
+		return
+	}
 	allowed, err := h.store.StudentHasPaymentAccess(r.Context(), currentUser(r))
 	if err != nil || !allowed {
 		http.Redirect(w, r, "/student/payments?notice="+url.QueryEscape("Upload dokumen dibuka setelah bukti pembayaran dikirim atau invoice lunas."), http.StatusSeeOther)
@@ -763,6 +757,9 @@ func (h Handler) exportFinance(w http.ResponseWriter, r *http.Request) {
 
 func (h Handler) postChatMessage(w http.ResponseWriter, r *http.Request) {
 	if currentUser(r).Role == dashboard.RoleStudent {
+		if !h.requireSignedAgreement(w, r) {
+			return
+		}
 		allowed, err := h.store.StudentHasPaymentAccess(r.Context(), currentUser(r))
 		if err != nil || !allowed {
 			http.Redirect(w, r, "/student/payments?notice="+url.QueryEscape("Chat konsultan dibuka setelah bukti pembayaran dikirim atau invoice lunas."), http.StatusSeeOther)

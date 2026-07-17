@@ -337,6 +337,87 @@ func (r *SQLRepository) ensureServicePackagesSeeded(ctx context.Context) error {
 	return nil
 }
 
+// defaultTextTemplates seeds a handful of starter canned replies so the
+// "Template Teks" page isn't empty the first time owner/staff open it.
+func defaultTextTemplates() []TextTemplate {
+	return []TextTemplate{
+		{
+			Title:    "Cara Pembayaran",
+			Category: "Pembayaran",
+			Body:     "Halo! Pembayaran bisa dilakukan via transfer ke rekening yang tertera di invoice. Setelah transfer, mohon upload bukti pembayaran di menu Pembayaran ya, nanti akan kami verifikasi dalam 1x24 jam.",
+		},
+		{
+			Title:    "Dokumen yang Dibutuhkan",
+			Category: "Dokumen",
+			Body:     "Dokumen yang perlu disiapkan: Passport, Ijazah Terakhir, Transkrip Nilai, Foto Background Putih 4x6, KTP, KK, Akta Kelahiran, Autobiografi, Mutasi Rekening, dan Surat Rekomendasi. Silakan upload satu per satu di menu Dokumen.",
+		},
+		{
+			Title:    "Estimasi Proses",
+			Category: "Timeline",
+			Body:     "Estimasi proses dari pendaftaran sampai keberangkatan biasanya memakan waktu 3-6 bulan tergantung jadwal kampus dan kelengkapan dokumen. Tim kami akan selalu update progress lewat menu Progress Saya.",
+		},
+	}
+}
+
+func (r *SQLRepository) ensureTextTemplatesSeeded(ctx context.Context) error {
+	var count int
+	if err := r.queryRow(ctx, `SELECT COUNT(*) FROM text_templates`).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	now := time.Now()
+	for i, tpl := range defaultTextTemplates() {
+		if _, err := r.exec(ctx, `INSERT INTO text_templates (id, title, body, category, position, created_at) VALUES (?, ?, ?, ?, ?, ?)`, newID("tpl"), tpl.Title, tpl.Body, tpl.Category, i, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// defaultInstitutionContacts seeds a few common partner institutions so the
+// "Direktori Institusi" page isn't empty on first use.
+func defaultInstitutionContacts() []InstitutionContact {
+	return []InstitutionContact{
+		{
+			Name:     "Penerjemah Tersumpah - Budi Santoso",
+			Category: "Penerjemah",
+			Phone:    "6281200000001",
+			Notes:    "Translate ijazah, transkrip, dan akta kelahiran.",
+		},
+		{
+			Name:     "Kemenkumham - Legalisir Dokumen",
+			Category: "Legalisir",
+			Phone:    "6281200000002",
+			Notes:    "Legalisir dokumen tingkat Kemenkumham.",
+		},
+		{
+			Name:     "Kemenlu - Legalisir Dokumen",
+			Category: "Legalisir",
+			Phone:    "6281200000003",
+			Notes:    "Legalisir dokumen tingkat Kemenlu sebelum ke kantor dagang Taiwan.",
+		},
+	}
+}
+
+func (r *SQLRepository) ensureInstitutionContactsSeeded(ctx context.Context) error {
+	var count int
+	if err := r.queryRow(ctx, `SELECT COUNT(*) FROM institution_contacts`).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	now := time.Now()
+	for i, contact := range defaultInstitutionContacts() {
+		if _, err := r.exec(ctx, `INSERT INTO institution_contacts (id, name, category, phone, notes, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, newID("inst"), contact.Name, contact.Category, contact.Phone, contact.Notes, i, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func seedUser(id, username, password, name, email, phone string, role Role, now time.Time) (User, error) {
 	hash, err := security.HashPassword(password)
 	if err != nil {

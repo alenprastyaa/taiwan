@@ -1,6 +1,6 @@
 # University Agency Dashboard
 
-Dashboard operasional untuk Taiwan Education Consulting dengan role owner, staff, dan client.
+Dashboard operasional untuk Formora Taiwan dengan role owner, staff, dan client.
 
 ## Tech Stack
 

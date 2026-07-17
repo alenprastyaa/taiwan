@@ -30,9 +30,35 @@ const (
 	SectionProgress  Section = "progress"
 	SectionPayments  Section = "payments"
 	SectionChat      Section = "chat"
-	SectionExpenses  Section = "expenses"
-	SectionOrders    Section = "orders"
+	SectionExpenses     Section = "expenses"
+	SectionOrders       Section = "orders"
+	SectionTemplates    Section = "templates"
+	SectionInstitutions Section = "institutions"
+	SectionIntake       Section = "intake"
+	SectionActivity     Section = "activity"
+	SectionAgreement    Section = "agreement"
 )
+
+// CurrentAgreementVersion tags every signature with the agreement text
+// version in force at signing time — bump this if AgreementText changes so
+// past signatures remain a faithful record of what was actually agreed to.
+const CurrentAgreementVersion = "v1"
+
+// AgreementText is the perjanjian kerjasama shown to every client/student
+// before they can use the rest of their dashboard. Not owner-editable in
+// this pass — only the gating/signing/PDF flow was requested.
+const AgreementText = `SURAT PERJANJIAN KERJASAMA LAYANAN KONSULTASI PENDIDIKAN
+
+Dengan menyetujui perjanjian ini, Client menyatakan bahwa:
+
+1. Client telah membaca dan memahami seluruh ketentuan layanan yang diberikan oleh agensi, termasuk namun tidak terbatas pada: pendampingan aplikasi kampus, pengurusan dokumen, penerjemahan, legalisir, dan pengurusan visa.
+2. Client bertanggung jawab atas keaslian dan kebenaran seluruh dokumen serta data yang diserahkan kepada agensi.
+3. Biaya yang telah dibayarkan mengikuti ketentuan paket layanan yang dipilih dan tidak dapat dikembalikan setelah proses aplikasi dimulai, kecuali diatur lain secara tertulis.
+4. Agensi akan menjaga kerahasiaan data pribadi Client dan hanya menggunakannya untuk keperluan proses aplikasi pendidikan dan visa.
+5. Estimasi waktu proses dapat berubah sewaktu-waktu mengikuti kebijakan kampus tujuan, kedutaan, atau lembaga terkait di luar kendali agensi.
+6. Client wajib melakukan follow up aktif dan responsif terhadap permintaan dokumen atau informasi tambahan dari agensi.
+
+Perjanjian ini berlaku sejak Client menyetujui secara elektronik melalui sistem ini, dan menjadi bukti sah kesepakatan kedua belah pihak.`
 
 type ViewModel struct {
 	AppName              string
@@ -63,6 +89,16 @@ type ViewModel struct {
 	Schedules            []ScheduleItem
 	Tasks                []Task
 	Expenses             []Expense
+	Staff                []User
+	TextTemplates        []TextTemplate
+	InstitutionContacts  []InstitutionContact
+	IntakeForm           ClientIntakeForm
+	HasIntakeForm        bool
+	IntakeForms          []ClientIntakeForm
+	ActivityLog          []ActivityLog
+	FilterDate           string
+	Agreement            ClientAgreement
+	HasSignedAgreement   bool
 	Conversations        []ChatConversation
 	Messages             []ChatMessage
 	ActiveChatID         string
@@ -105,11 +141,15 @@ type User struct {
 }
 
 type CreateStudentInput struct {
-	Username string
-	Password string
-	Name     string
-	Email    string
-	Phone    string
+	Username    string
+	Password    string
+	Name        string
+	Email       string
+	Phone       string
+	PackageName string
+	Country     string
+	Campus      string
+	PICStaffID  string
 }
 
 type CreateTaskInput struct {
@@ -267,6 +307,126 @@ type ServicePackageInput struct {
 	Price       int64
 	PriceIsFrom bool
 	Highlights  string
+}
+
+// TextTemplate is a staff/owner-managed canned reply — reusable copy-paste
+// text for answering repeated client questions (payment, docs, timeline, etc.).
+type TextTemplate struct {
+	ID        string
+	Title     string
+	Body      string
+	Category  string
+	Position  int
+	CreatedAt time.Time
+}
+
+type TextTemplateInput struct {
+	Title    string
+	Body     string
+	Category string
+}
+
+// InstitutionContact is an owner/staff-managed directory entry for partner
+// institutions (translators, legalization offices, etc.) with a WhatsApp
+// number for quick follow-up via click-to-chat.
+type InstitutionContact struct {
+	ID        string
+	Name      string
+	Category  string
+	Phone     string
+	Notes     string
+	Position  int
+	CreatedAt time.Time
+}
+
+type InstitutionContactInput struct {
+	Name     string
+	Category string
+	Phone    string
+	Notes    string
+}
+
+// ClientIntakeForm is the client-filled biodata form (mirrors the agency's
+// Google Form) — one row per client, editable anytime by the client, and
+// aggregated live for owner/staff on the "Data Client / Formulir" page.
+type ClientIntakeForm struct {
+	ID             string
+	ClientID       string
+	ClientName     string
+	Email          string
+	FullNameEn     string
+	Gender         string
+	DateOfBirth    string
+	PlaceOfBirth   string
+	PassportNumber string
+	PhoneNumber    string
+	Address        string
+	PostalCode     string
+	FatherName     string
+	FatherDOB      string
+	FatherPhone    string
+	MotherName     string
+	MotherDOB      string
+	MotherPhone    string
+	SchoolName     string
+	SchoolLocation string
+	DatesEnrolled  string
+	DatesGraduate  string
+	SocialMediaIG  string
+	SubmittedAt    time.Time
+	UpdatedAt      time.Time
+}
+
+// ActivityLog is an immutable, append-only event stream of staff actions
+// (auto-logged from existing write methods) plus manual notes — the "what
+// did staff do today" report the owner can review per staff per day.
+type ActivityLog struct {
+	ID          string
+	StaffID     string
+	StaffName   string
+	ClientID    string
+	ClientName  string
+	ActionType  string
+	Description string
+	CreatedAt   time.Time
+}
+
+// ClientAgreement is the signed record of a client accepting the agency's
+// perjanjian: a checkbox + typed full name + timestamp + IP address, used
+// as the legal proof exported to PDF for both parties.
+type ClientAgreement struct {
+	ID               string
+	ClientID         string
+	ClientName       string
+	AgreementVersion string
+	AgreementText    string
+	FullNameTyped    string
+	AgreedAt         time.Time
+	IPAddress        string
+	UserAgent        string
+}
+
+type ClientIntakeFormInput struct {
+	Email          string
+	FullNameEn     string
+	Gender         string
+	DateOfBirth    string
+	PlaceOfBirth   string
+	PassportNumber string
+	PhoneNumber    string
+	Address        string
+	PostalCode     string
+	FatherName     string
+	FatherDOB      string
+	FatherPhone    string
+	MotherName     string
+	MotherDOB      string
+	MotherPhone    string
+	SchoolName     string
+	SchoolLocation string
+	DatesEnrolled  string
+	DatesGraduate  string
+	SocialMediaIG  string
 }
 
 type TaskStatus string
