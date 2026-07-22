@@ -34,6 +34,7 @@ func staffManagementPanel(vm dashboard.ViewModel) string {
 		resetConfirm := "Reset password " + staff.Name + "? Password baru akan digenerate dan ditampilkan sekali."
 		toggleConfirm := toggleLabel + " akun " + staff.Name + "?"
 		rows.WriteString(`<div class="package-manager-row">`)
+		rows.WriteString(`<div style="flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:.5rem">`)
 		rows.WriteString(`<form method="post" action="` + path + `/` + attr(staff.ID) + `/update" class="package-edit-form">`)
 		rows.WriteString(`<div class="package-edit-grid">`)
 		rows.WriteString(`<label>Nama<input name="name" value="` + attr(staff.Name) + `" required maxlength="191"></label>`)
@@ -43,10 +44,10 @@ func staffManagementPanel(vm dashboard.ViewModel) string {
 		rows.WriteString(`</div>`)
 		rows.WriteString(`<div class="package-edit-actions"><span class="status ` + statusClass + `">` + statusLabel + `</span><button class="primary-button small" type="submit">Simpan</button></div>`)
 		rows.WriteString(`</form>`)
-		rows.WriteString(`<div class="stage-manager-actions">`)
+		rows.WriteString(`<div style="display:flex;gap:.5rem;flex-wrap:wrap;justify-content:flex-end">`)
 		rows.WriteString(`<form method="post" action="` + path + `/` + attr(staff.ID) + `/reset-password" class="inline-form" data-confirm="` + attr(resetConfirm) + `"><button type="submit" class="icon-action">Reset Password</button></form>`)
 		rows.WriteString(`<form method="post" action="` + path + `/` + attr(staff.ID) + `/toggle-active" class="inline-form" data-confirm="` + attr(toggleConfirm) + `"><button type="submit" class="icon-action">` + toggleLabel + `</button></form>`)
-		rows.WriteString(`</div></div>`)
+		rows.WriteString(`</div></div></div>`)
 	}
 	if rows.Len() == 0 {
 		rows.WriteString(`<p class="empty-note">Belum ada akun staf. Klik "+ Tambah Staf" untuk menambahkan.</p>`)
