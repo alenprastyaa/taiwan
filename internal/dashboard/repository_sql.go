@@ -257,6 +257,51 @@ func (r *SQLRepository) CreateStudent(ctx context.Context, input CreateStudentIn
 	return user, nil
 }
 
+// ResetTestData permanently wipes every client-linked and transactional row
+// (clients, orders, documents, tasks, expenses, shipments, chat, intake
+// forms, activity log, signed agreements) so an owner can clear out
+// demo/seed data before going live with real clients. Owner/staff accounts
+// and business configuration (pipeline stages, service packages, text
+// templates, institution contacts, expense categories, shipment couriers)
+// are deliberately left untouched — those are real setup, not test data.
+// Callers (the HTTP handler) are expected to have already re-verified the
+// owner's password before invoking this; there is no undo.
+func (r *SQLRepository) ResetTestData(ctx context.Context, viewer User) error {
+	if viewer.Role != RoleOwner {
+		return ErrForbidden
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	tables := []string{
+		"chat_messages",
+		"chat_conversations",
+		"client_agreements",
+		"client_intake_forms",
+		"shipments",
+		"expenses",
+		"tasks",
+		"documents",
+		"orders",
+		"schedules",
+		"progress_stages",
+		"activity_log",
+		"clients",
+	}
+	for _, table := range tables {
+		if _, err := r.txExec(ctx, tx, `DELETE FROM `+table); err != nil {
+			return fmt.Errorf("clear %s: %w", table, err)
+		}
+	}
+	if _, err := r.txExec(ctx, tx, `DELETE FROM users WHERE role = ?`, RoleStudent); err != nil {
+		return fmt.Errorf("clear student users: %w", err)
+	}
+	return tx.Commit()
+}
+
 func (r *SQLRepository) CompanySnapshot(ctx context.Context, viewer User, viewRole Role) (CompanySnapshot, error) {
 	clients, err := r.ListClients(ctx, viewer, viewRole)
 	if err != nil {

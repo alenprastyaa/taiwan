@@ -1045,7 +1045,19 @@ func settingsPanel(role string, includeFinance bool) string {
 	if includeFinance {
 		finance = `<div><span>Keuangan</span><strong>Owner only</strong><em>Aktif</em></div>`
 	}
-	return `<div class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,.8fr)]"><div class="panel"><h2 class="mb-4 text-lg font-semibold">Preferensi ` + esc(role) + `</h2><div class="settings-list"><div><span>Autentikasi</span><strong>Password + session aman</strong><em>Aktif</em></div><div><span>Notifikasi</span><strong>Email dan WhatsApp reminder</strong><em>Aktif</em></div><div><span>PWA</span><strong>Installable di Android</strong><em>Aktif</em></div>` + finance + `<div><span>SEO</span><strong>Metadata per halaman</strong><em>Aktif</em></div></div></div><div class="panel"><h2 class="mb-4 text-lg font-semibold">Keamanan</h2><p class="text-sm leading-6 text-slate-600">Aplikasi menggunakan security headers, konfigurasi via environment, timeout server, dan graceful shutdown. Hak akses disiapkan per role agar staff tidak melihat laporan profit dan client hanya melihat data miliknya sendiri.</p></div></div>`
+	dangerZone := ""
+	if role == "Owner" {
+		dangerZone = `<div class="panel" style="border-color:#fecaca">
+  <h2 class="mb-2 text-lg font-semibold text-red-600">Reset Data Test</h2>
+  <p class="text-sm leading-6 text-slate-600 mb-4">Menghapus permanen: akun client, order/invoice, dokumen, progress, jadwal, task, pengeluaran, pengiriman logistik, chat, formulir data diri, aktivitas, dan perjanjian yang sudah ditandatangani. <strong>Tidak</strong> menghapus akun owner/staff maupun konfigurasi (paket layanan, tahap pipeline, template teks, direktori institusi, kategori pengeluaran, daftar ekspedisi). Aksi ini permanen dan tidak bisa dibatalkan — pastikan sudah backup database sebelum lanjut.</p>
+  <form method="post" action="/owner/settings/reset-data" class="student-upload-form" data-confirm="Yakin reset semua data client &amp; transaksi test? Aksi ini permanen dan tidak bisa dibatalkan.">
+    <label>Ketik &quot;RESET DATA&quot; untuk konfirmasi<input name="confirm_phrase" required placeholder="RESET DATA"></label>
+    <label>Password Owner<input name="password" type="password" required></label>
+    <button class="primary-button" type="submit" style="background:#dc2626;border-color:#dc2626">Reset Data Test</button>
+  </form>
+</div>`
+	}
+	return `<div class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,.8fr)]"><div class="panel"><h2 class="mb-4 text-lg font-semibold">Preferensi ` + esc(role) + `</h2><div class="settings-list"><div><span>Autentikasi</span><strong>Password + session aman</strong><em>Aktif</em></div><div><span>Notifikasi</span><strong>Email dan WhatsApp reminder</strong><em>Aktif</em></div><div><span>PWA</span><strong>Installable di Android</strong><em>Aktif</em></div>` + finance + `<div><span>SEO</span><strong>Metadata per halaman</strong><em>Aktif</em></div></div></div><div class="panel"><h2 class="mb-4 text-lg font-semibold">Keamanan</h2><p class="text-sm leading-6 text-slate-600">Aplikasi menggunakan security headers, konfigurasi via environment, timeout server, dan graceful shutdown. Hak akses disiapkan per role agar staff tidak melihat laporan profit dan client hanya melihat data miliknya sendiri.</p></div></div>` + dangerZone
 }
 
 func calendarPanel(vm dashboard.ViewModel, title string) string {

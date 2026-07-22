@@ -109,6 +109,7 @@ func NewRouter(deps Dependencies) http.Handler {
 		r.Post("/staff/clients/{clientID}/reset-password", h.resetClientPassword)
 		r.Post("/logistics/create", h.createShipment)
 		r.Post("/logistics/{shipmentID}/received", h.markShipmentReceived)
+		r.Post("/owner/settings/reset-data", h.resetTestData)
 		r.Post("/chat/{conversationID}/messages", h.postChatMessage)
 		r.Get("/ws/chat/{conversationID}", h.chatWebSocket)
 		r.Get("/client", h.clientAlias)
