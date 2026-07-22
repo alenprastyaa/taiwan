@@ -24,6 +24,7 @@ type Repository interface {
 	ListPipelineStages(ctx context.Context) ([]PipelineStage, error)
 	ListServicePackages(ctx context.Context) ([]ServicePackage, error)
 	ListStaff(ctx context.Context) ([]User, error)
+	ListAllStaff(ctx context.Context) ([]User, error)
 	ListTextTemplates(ctx context.Context) ([]TextTemplate, error)
 	ListInstitutionContacts(ctx context.Context) ([]InstitutionContact, error)
 	ListClientIntakeForms(ctx context.Context, viewer User, viewRole Role) ([]ClientIntakeForm, error)
@@ -141,6 +142,11 @@ func (s Service) View(ctx context.Context, appName, appURL string, viewer User, 
 		if (role == RoleOwner || role == RoleStaff) && section == SectionClients {
 			if vm.Staff, err = s.repository.ListStaff(ctx); err != nil {
 				return ViewModel{}, fmt.Errorf("load staff: %w", err)
+			}
+		}
+		if role == RoleOwner && section == SectionStaff {
+			if vm.StaffAccounts, err = s.repository.ListAllStaff(ctx); err != nil {
+				return ViewModel{}, fmt.Errorf("load staff accounts: %w", err)
 			}
 		}
 		if (role == RoleOwner || role == RoleStaff) && section == SectionTemplates {
@@ -282,7 +288,7 @@ func validSection(role Role, section Section) bool {
 			SectionDashboard: true, SectionFinance: true, SectionClients: true, SectionPipeline: true,
 			SectionServices: true, SectionReports: true, SectionSettings: true, SectionOrders: true,
 			SectionInvoices: true, SectionChat: true, SectionTemplates: true, SectionInstitutions: true,
-			SectionIntake: true, SectionActivity: true, SectionLogistics: true,
+			SectionIntake: true, SectionActivity: true, SectionLogistics: true, SectionStaff: true,
 		},
 		RoleStaff: {
 			SectionDashboard: true, SectionClients: true, SectionPipeline: true, SectionTasks: true,
@@ -314,6 +320,7 @@ func navigation(role Role, active Section) []NavItem {
 			{Label: "Data Client / Formulir", Href: "/owner/intake", Icon: "file"},
 			{Label: "Logistik Dokumen", Href: "/owner/logistics", Icon: "briefcase"},
 			{Label: "Aktivitas Staff", Href: "/owner/activity", Icon: "chart"},
+			{Label: "Manajemen Staf", Href: "/owner/staff", Icon: "users"},
 			{Label: "Chat", Href: "/owner/chat", Icon: "chat"},
 			{Label: "Pengaturan", Href: "/owner/settings", Icon: "settings"},
 		},
@@ -382,6 +389,8 @@ func sectionFromHref(href string) Section {
 		return SectionAgreement
 	case "/owner/logistics", "/staff/logistics", "/student/logistics":
 		return SectionLogistics
+	case "/owner/staff":
+		return SectionStaff
 	case "/owner/chat":
 		return SectionChat
 	case "/staff/tasks":
@@ -429,6 +438,8 @@ func pageCopy(role Role, section Section) (string, string, string) {
 			return "Data Client / Formulir", "Rekap biodata client dari formulir pendaftaran.", "Data terisi otomatis saat client mengisi formulir sendiri, dapat diexport ke Excel."
 		case SectionActivity:
 			return "Aktivitas Staff", "Laporan tugas yang sudah dikerjakan staff hari ini.", "Rangkuman otomatis dari dokumen direview, invoice lunas, task selesai, dan pengeluaran dicatat, per staff per hari."
+		case SectionStaff:
+			return "Manajemen Staf", "Kelola akun staf konsultan.", "Tambah, ubah data, reset password, dan nonaktifkan akun staf."
 		case SectionChat:
 			return "Chat Operasional", "Pantau percakapan staff dan client.", "Akses owner untuk memantau komunikasi dan eskalasi client."
 		case SectionSettings:

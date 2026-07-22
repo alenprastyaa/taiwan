@@ -38,6 +38,7 @@ const (
 	SectionActivity     Section = "activity"
 	SectionAgreement    Section = "agreement"
 	SectionLogistics    Section = "logistics"
+	SectionStaff        Section = "staff"
 )
 
 // CurrentAgreementVersion tags every signature with the agreement text
@@ -94,6 +95,7 @@ type ViewModel struct {
 	Shipments            []Shipment
 	ShipmentCouriers     []string
 	Staff                []User
+	StaffAccounts        []User
 	TextTemplates        []TextTemplate
 	InstitutionContacts  []InstitutionContact
 	IntakeForm           ClientIntakeForm
@@ -155,6 +157,20 @@ type CreateStudentInput struct {
 	Country     string
 	Campus      string
 	PICStaffID  string
+}
+
+type CreateStaffInput struct {
+	Username string
+	Password string
+	Name     string
+	Email    string
+	Phone    string
+}
+
+type UpdateStaffInput struct {
+	Name  string
+	Email string
+	Phone string
 }
 
 type CreateTaskInput struct {

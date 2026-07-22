@@ -201,6 +201,8 @@ func ownerContent(vm dashboard.ViewModel) string {
 		return ownerActivity(vm)
 	case dashboard.SectionLogistics:
 		return staffLogistics(vm)
+	case dashboard.SectionStaff:
+		return staffManagementPanel(vm)
 	case dashboard.SectionChat:
 		return chatPanel(vm, "Chat Operasional")
 	case dashboard.SectionSettings:
@@ -870,7 +872,7 @@ func staffClients(vm dashboard.ViewModel) string {
 func staffPipeline(vm dashboard.ViewModel) string {
 	return `<div class="space-y-5">
   ` + pipelineToolbar(vm, "/staff/pipeline") + `
-  <div class="panel border-0 shadow-none"><div class="mini-kanban large">` + pipelineColumns(vm) + `</div></div>
+  <div class="panel border-0 shadow-none">` + pipelineColumns(vm) + `</div>
 </div>`
 }
 

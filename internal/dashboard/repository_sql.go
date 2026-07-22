@@ -1259,6 +1259,124 @@ func (r *SQLRepository) ResetStudentPassword(ctx context.Context, viewer User, c
 	return user, newPassword, nil
 }
 
+// ListAllStaff returns every staff account regardless of active status, so
+// the owner-facing management page can also see (and re-activate) disabled
+// accounts — unlike ListStaff, which only surfaces active staff for PIC
+// dropdowns elsewhere.
+func (r *SQLRepository) ListAllStaff(ctx context.Context) ([]User, error) {
+	rows, err := r.query(ctx, `SELECT id, username, name, email, phone, role, password_hash, active, created_at FROM users WHERE role = ? ORDER BY name ASC`, RoleStaff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var staff []User
+	for rows.Next() {
+		user, err := r.scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		staff = append(staff, user)
+	}
+	return staff, rows.Err()
+}
+
+func (r *SQLRepository) findStaffAccountByID(ctx context.Context, id string) (User, error) {
+	return r.scanUser(r.queryRow(ctx, `SELECT id, username, name, email, phone, role, password_hash, active, created_at FROM users WHERE id = ? AND role = ?`, id, RoleStaff))
+}
+
+func (r *SQLRepository) CreateStaff(ctx context.Context, viewer User, input CreateStaffInput) (User, error) {
+	if viewer.Role != RoleOwner {
+		return User{}, ErrForbidden
+	}
+	username := usernameKey(input.Username)
+	name := strings.TrimSpace(input.Name)
+	if username == "" || len(input.Password) < 8 || name == "" {
+		return User{}, ErrInvalidInput
+	}
+	if _, err := r.scanUser(r.queryRow(ctx, `SELECT id, username, name, email, phone, role, password_hash, active, created_at FROM users WHERE username = ?`, username)); err == nil {
+		return User{}, ErrDuplicate
+	} else if !errors.Is(err, ErrNotFound) {
+		return User{}, err
+	}
+	hash, err := security.HashPassword(input.Password)
+	if err != nil {
+		return User{}, err
+	}
+	user := User{
+		ID:           newID("user-staff"),
+		Username:     username,
+		Name:         name,
+		Email:        strings.TrimSpace(input.Email),
+		Phone:        strings.TrimSpace(input.Phone),
+		Role:         RoleStaff,
+		PasswordHash: hash,
+		Active:       true,
+		CreatedAt:    time.Now(),
+	}
+	if _, err := r.exec(ctx, `INSERT INTO users (id, username, name, email, phone, role, password_hash, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, user.ID, user.Username, user.Name, user.Email, user.Phone, user.Role, user.PasswordHash, user.Active, user.CreatedAt); err != nil {
+		return User{}, err
+	}
+	return user, nil
+}
+
+func (r *SQLRepository) UpdateStaff(ctx context.Context, viewer User, staffID string, input UpdateStaffInput) (User, error) {
+	if viewer.Role != RoleOwner {
+		return User{}, ErrForbidden
+	}
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return User{}, ErrInvalidInput
+	}
+	if _, err := r.findStaffAccountByID(ctx, staffID); err != nil {
+		return User{}, err
+	}
+	if _, err := r.exec(ctx, `UPDATE users SET name = ?, email = ?, phone = ? WHERE id = ? AND role = ?`, name, strings.TrimSpace(input.Email), strings.TrimSpace(input.Phone), staffID, RoleStaff); err != nil {
+		return User{}, err
+	}
+	return r.findStaffAccountByID(ctx, staffID)
+}
+
+// ToggleStaffActive flips a staff account between active and disabled —
+// used as a soft delete since staff IDs are referenced elsewhere (PIC on
+// clients, tasks, expenses, activity log), so a hard delete would orphan
+// that history.
+func (r *SQLRepository) ToggleStaffActive(ctx context.Context, viewer User, staffID string) error {
+	if viewer.Role != RoleOwner {
+		return ErrForbidden
+	}
+	user, err := r.findStaffAccountByID(ctx, staffID)
+	if err != nil {
+		return err
+	}
+	_, err = r.exec(ctx, `UPDATE users SET active = ? WHERE id = ?`, !user.Active, user.ID)
+	return err
+}
+
+// ResetStaffPassword mirrors ResetStudentPassword's one-time-display
+// pattern, scoped to staff accounts and owner-only.
+func (r *SQLRepository) ResetStaffPassword(ctx context.Context, viewer User, staffID string) (User, string, error) {
+	if viewer.Role != RoleOwner {
+		return User{}, "", ErrForbidden
+	}
+	user, err := r.findStaffAccountByID(ctx, staffID)
+	if err != nil {
+		return User{}, "", err
+	}
+	newPassword, err := security.GenerateRandomPassword()
+	if err != nil {
+		return User{}, "", err
+	}
+	hash, err := security.HashPassword(newPassword)
+	if err != nil {
+		return User{}, "", err
+	}
+	if _, err := r.exec(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, hash, user.ID); err != nil {
+		return User{}, "", err
+	}
+	return user, newPassword, nil
+}
+
 func (r *SQLRepository) ListServicePackages(ctx context.Context) ([]ServicePackage, error) {
 	rows, err := r.query(ctx, `SELECT id, name, category, description, price, price_is_from, highlights, position, created_at FROM service_packages ORDER BY position ASC`)
 	if err != nil {
