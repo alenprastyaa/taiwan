@@ -37,6 +37,7 @@ const (
 	SectionIntake       Section = "intake"
 	SectionActivity     Section = "activity"
 	SectionAgreement    Section = "agreement"
+	SectionLogistics    Section = "logistics"
 )
 
 // CurrentAgreementVersion tags every signature with the agreement text
@@ -89,12 +90,16 @@ type ViewModel struct {
 	Schedules            []ScheduleItem
 	Tasks                []Task
 	Expenses             []Expense
+	ExpenseCategories    []string
+	Shipments            []Shipment
+	ShipmentCouriers     []string
 	Staff                []User
 	TextTemplates        []TextTemplate
 	InstitutionContacts  []InstitutionContact
 	IntakeForm           ClientIntakeForm
 	HasIntakeForm        bool
 	IntakeForms          []ClientIntakeForm
+	EditClientID         string
 	ActivityLog          []ActivityLog
 	FilterDate           string
 	Agreement            ClientAgreement
@@ -349,6 +354,8 @@ type InstitutionContactInput struct {
 // ClientIntakeForm is the client-filled biodata form (mirrors the agency's
 // Google Form) — one row per client, editable anytime by the client, and
 // aggregated live for owner/staff on the "Data Client / Formulir" page.
+// Owner/staff can also fill in or correct it on the client's behalf (e.g.
+// missing fields, a typo caught later) via the same save path.
 type ClientIntakeForm struct {
 	ID             string
 	ClientID       string
@@ -467,6 +474,56 @@ type Expense struct {
 	Description        string
 	ReceiptFileName    string
 	ReceiptStoragePath string
+}
+
+type ShipmentDirection string
+
+const (
+	// ShipmentOutgoing is agency -> client/institution (e.g. legalized
+	// documents mailed back to the client, or forwarded to an embassy).
+	ShipmentOutgoing ShipmentDirection = "outgoing"
+	// ShipmentIncoming is client/institution -> agency (e.g. the client
+	// couriers original documents to the office).
+	ShipmentIncoming ShipmentDirection = "incoming"
+)
+
+type ShipmentStatus string
+
+const (
+	ShipmentShipped   ShipmentStatus = "shipped"
+	ShipmentDelivered ShipmentStatus = "delivered"
+)
+
+// Shipment tracks a single courier shipment of physical documents in either
+// direction, so owner/staff/client can all see what was sent, its tracking
+// number, and whether it has arrived — mirrors Expense's shape (client-linked,
+// staff-recorded, simple status).
+type Shipment struct {
+	ID                string
+	ClientID          string
+	ClientName        string
+	StaffID           string
+	Direction         ShipmentDirection
+	Courier           string
+	TrackingNumber    string
+	Contents          string
+	SenderAddress     string
+	RecipientAddress  string
+	Status            ShipmentStatus
+	ShippedDateLabel  string
+	ReceivedDateLabel string
+	CreatedAt         time.Time
+}
+
+type CreateShipmentInput struct {
+	ClientID         string
+	Direction        string
+	Courier          string
+	TrackingNumber   string
+	Contents         string
+	SenderAddress    string
+	RecipientAddress string
+	ShippedDateLabel string
 }
 
 type ChatConversation struct {

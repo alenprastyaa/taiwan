@@ -73,6 +73,12 @@ func NewSQLRepository(ctx context.Context, db *sql.DB, driver string, opts SQLRe
 	if err := repo.ensureInstitutionContactsSeeded(ctx); err != nil {
 		return nil, err
 	}
+	if err := repo.ensureExpenseCategoriesSeeded(ctx); err != nil {
+		return nil, err
+	}
+	if err := repo.ensureShipmentCouriersSeeded(ctx); err != nil {
+		return nil, err
+	}
 	return repo, nil
 }
 
@@ -488,6 +494,116 @@ func (r *SQLRepository) ListExpenses(ctx context.Context, viewer User, viewRole 
 	return expenses, rows.Err()
 }
 
+func (r *SQLRepository) ListExpenseCategories(ctx context.Context) ([]string, error) {
+	rows, err := r.query(ctx, `SELECT name FROM expense_categories ORDER BY name ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var categories []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		categories = append(categories, name)
+	}
+	return categories, rows.Err()
+}
+
+// upsertExpenseCategory remembers a newly typed category so it becomes an
+// autocomplete suggestion next time. It's a best-effort side effect: callers
+// should not fail expense creation if this errors.
+func (r *SQLRepository) upsertExpenseCategory(ctx context.Context, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	var exists int
+	if err := r.queryRow(ctx, `SELECT COUNT(*) FROM expense_categories WHERE name = ?`, name).Scan(&exists); err != nil {
+		return err
+	}
+	if exists > 0 {
+		return nil
+	}
+	_, err := r.exec(ctx, `INSERT INTO expense_categories (id, name, created_at) VALUES (?, ?, ?)`, newID("expcat"), name, time.Now())
+	return err
+}
+
+// ListShipments returns shipments scoped to what the viewer may see — same
+// visibility rule as ListDocuments/ListExpenses: resolve visible clients via
+// ListClients (already scoped per role) and filter by ClientID, so owner,
+// PIC staff, and the client themselves each see the right slice.
+func (r *SQLRepository) ListShipments(ctx context.Context, viewer User, viewRole Role) ([]Shipment, error) {
+	clients, err := r.ListClients(ctx, viewer, viewRole)
+	if err != nil {
+		return nil, err
+	}
+	visible := make(map[string]bool, len(clients))
+	for _, client := range clients {
+		visible[client.ID] = true
+	}
+
+	rows, err := r.query(ctx, `SELECT s.id, s.client_id, COALESCE(c.name, ''), s.staff_id, s.direction, s.courier, s.tracking_number, s.contents, s.sender_address, s.recipient_address, s.status, s.shipped_date_label, s.received_date_label, s.created_at FROM shipments s LEFT JOIN clients c ON c.id = s.client_id ORDER BY s.created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var shipments []Shipment
+	for rows.Next() {
+		var shipment Shipment
+		var direction, status string
+		if err := rows.Scan(&shipment.ID, &shipment.ClientID, &shipment.ClientName, &shipment.StaffID, &direction, &shipment.Courier, &shipment.TrackingNumber, &shipment.Contents, &shipment.SenderAddress, &shipment.RecipientAddress, &status, &shipment.ShippedDateLabel, &shipment.ReceivedDateLabel, &shipment.CreatedAt); err != nil {
+			return nil, err
+		}
+		shipment.Direction = ShipmentDirection(direction)
+		shipment.Status = ShipmentStatus(status)
+		if visible[shipment.ClientID] {
+			shipments = append(shipments, shipment)
+		}
+	}
+	return shipments, rows.Err()
+}
+
+func (r *SQLRepository) ListShipmentCouriers(ctx context.Context) ([]string, error) {
+	rows, err := r.query(ctx, `SELECT name FROM shipment_couriers ORDER BY name ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var couriers []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		couriers = append(couriers, name)
+	}
+	return couriers, rows.Err()
+}
+
+// upsertShipmentCourier remembers a newly typed courier so it becomes an
+// autocomplete suggestion next time — same best-effort shape as
+// upsertExpenseCategory.
+func (r *SQLRepository) upsertShipmentCourier(ctx context.Context, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	var exists int
+	if err := r.queryRow(ctx, `SELECT COUNT(*) FROM shipment_couriers WHERE name = ?`, name).Scan(&exists); err != nil {
+		return err
+	}
+	if exists > 0 {
+		return nil
+	}
+	_, err := r.exec(ctx, `INSERT INTO shipment_couriers (id, name, created_at) VALUES (?, ?, ?)`, newID("courier"), name, time.Now())
+	return err
+}
+
 func (r *SQLRepository) MarkOrderPaidByCode(ctx context.Context, viewer User, code string) (Order, error) {
 	if viewer.Role != RoleOwner {
 		return Order{}, ErrForbidden
@@ -729,12 +845,92 @@ func (r *SQLRepository) CreateExpense(ctx context.Context, viewer User, input Cr
 	if _, err := r.exec(ctx, `INSERT INTO expenses (id, staff_id, client_id, need, category, amount, status, date_label, description, receipt_file_name, receipt_storage_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, staffID, client.ID, need, category, input.Amount, status, dateLabel, strings.TrimSpace(input.Description), strings.TrimSpace(input.FileName), strings.TrimSpace(input.StoragePath)); err != nil {
 		return Expense{}, err
 	}
+	_ = r.upsertExpenseCategory(ctx, category)
 	expense, err := r.findExpenseByID(ctx, id)
 	if err != nil {
 		return Expense{}, err
 	}
 	r.logActivity(ctx, viewer.ID, client.ID, "expense_recorded", need+" - Rp"+strconv.FormatInt(input.Amount, 10))
 	return expense, nil
+}
+
+func (r *SQLRepository) CreateShipment(ctx context.Context, viewer User, input CreateShipmentInput) (Shipment, error) {
+	if viewer.Role != RoleOwner && viewer.Role != RoleStaff {
+		return Shipment{}, ErrForbidden
+	}
+	client, err := r.findClientByID(ctx, input.ClientID)
+	if err != nil {
+		return Shipment{}, err
+	}
+	if viewer.Role == RoleStaff && client.PICStaffID != viewer.ID {
+		return Shipment{}, ErrForbidden
+	}
+	direction := ShipmentDirection(input.Direction)
+	if direction != ShipmentOutgoing && direction != ShipmentIncoming {
+		return Shipment{}, ErrInvalidInput
+	}
+	courier := strings.TrimSpace(input.Courier)
+	if courier == "" {
+		return Shipment{}, ErrInvalidInput
+	}
+	shippedDateLabel := strings.TrimSpace(input.ShippedDateLabel)
+	if shippedDateLabel == "" {
+		shippedDateLabel = time.Now().Format("02/01/2006")
+	}
+	staffID := client.PICStaffID
+	if staffID == "" {
+		staffID = viewer.ID
+	}
+	id := newID("shipment")
+	now := time.Now()
+	if _, err := r.exec(ctx, `INSERT INTO shipments (id, client_id, staff_id, direction, courier, tracking_number, contents, sender_address, recipient_address, status, shipped_date_label, received_date_label, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, client.ID, staffID, direction, courier, strings.TrimSpace(input.TrackingNumber), strings.TrimSpace(input.Contents), strings.TrimSpace(input.SenderAddress), strings.TrimSpace(input.RecipientAddress), ShipmentShipped, shippedDateLabel, "", now); err != nil {
+		return Shipment{}, err
+	}
+	_ = r.upsertShipmentCourier(ctx, courier)
+	shipment, err := r.findShipmentByID(ctx, id)
+	if err != nil {
+		return Shipment{}, err
+	}
+	r.logActivity(ctx, viewer.ID, client.ID, "shipment_created", "Kirim dokumen via "+courier+" ("+strings.TrimSpace(input.TrackingNumber)+")")
+	return shipment, nil
+}
+
+func (r *SQLRepository) MarkShipmentReceived(ctx context.Context, viewer User, shipmentID string) (Shipment, error) {
+	if viewer.Role != RoleOwner && viewer.Role != RoleStaff {
+		return Shipment{}, ErrForbidden
+	}
+	shipment, err := r.findShipmentByID(ctx, shipmentID)
+	if err != nil {
+		return Shipment{}, err
+	}
+	if viewer.Role == RoleStaff && shipment.StaffID != viewer.ID {
+		return Shipment{}, ErrForbidden
+	}
+	receivedDateLabel := time.Now().Format("02/01/2006")
+	if _, err := r.exec(ctx, `UPDATE shipments SET status = ?, received_date_label = ? WHERE id = ?`, ShipmentDelivered, receivedDateLabel, shipmentID); err != nil {
+		return Shipment{}, err
+	}
+	updated, err := r.findShipmentByID(ctx, shipmentID)
+	if err != nil {
+		return Shipment{}, err
+	}
+	r.logActivity(ctx, viewer.ID, updated.ClientID, "shipment_received", "Dokumen diterima via "+updated.Courier+" ("+updated.TrackingNumber+")")
+	return updated, nil
+}
+
+func (r *SQLRepository) findShipmentByID(ctx context.Context, id string) (Shipment, error) {
+	var shipment Shipment
+	var direction, status string
+	if err := r.queryRow(ctx, `SELECT s.id, s.client_id, COALESCE(c.name, ''), s.staff_id, s.direction, s.courier, s.tracking_number, s.contents, s.sender_address, s.recipient_address, s.status, s.shipped_date_label, s.received_date_label, s.created_at FROM shipments s LEFT JOIN clients c ON c.id = s.client_id WHERE s.id = ?`, id).Scan(&shipment.ID, &shipment.ClientID, &shipment.ClientName, &shipment.StaffID, &direction, &shipment.Courier, &shipment.TrackingNumber, &shipment.Contents, &shipment.SenderAddress, &shipment.RecipientAddress, &status, &shipment.ShippedDateLabel, &shipment.ReceivedDateLabel, &shipment.CreatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Shipment{}, ErrNotFound
+		}
+		return Shipment{}, err
+	}
+	shipment.Direction = ShipmentDirection(direction)
+	shipment.Status = ShipmentStatus(status)
+	return shipment, nil
 }
 
 func (r *SQLRepository) CreateSchedule(ctx context.Context, viewer User, input CreateScheduleInput) (ScheduleItem, error) {
@@ -980,6 +1176,42 @@ func (r *SQLRepository) UpdateClientStage(ctx context.Context, viewer User, clie
 		return ClientProfile{}, err
 	}
 	return r.findClientByID(ctx, clientID)
+}
+
+// ResetStudentPassword generates a brand-new password for a client's login
+// account and returns it once so owner/staff can hand it to the client
+// directly (e.g. via chat/WhatsApp). Nothing is ever persisted in plaintext:
+// only the bcrypt hash is written to the users table.
+func (r *SQLRepository) ResetStudentPassword(ctx context.Context, viewer User, clientID string) (User, string, error) {
+	if viewer.Role != RoleOwner && viewer.Role != RoleStaff {
+		return User{}, "", ErrForbidden
+	}
+	client, err := r.findClientByID(ctx, clientID)
+	if err != nil {
+		return User{}, "", err
+	}
+	if viewer.Role == RoleStaff && client.PICStaffID != viewer.ID {
+		return User{}, "", ErrForbidden
+	}
+	if client.UserID == "" {
+		return User{}, "", ErrNotFound
+	}
+	newPassword, err := security.GenerateRandomPassword()
+	if err != nil {
+		return User{}, "", err
+	}
+	hash, err := security.HashPassword(newPassword)
+	if err != nil {
+		return User{}, "", err
+	}
+	if _, err := r.exec(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, hash, client.UserID); err != nil {
+		return User{}, "", err
+	}
+	user, err := r.FindUserByID(ctx, client.UserID)
+	if err != nil {
+		return User{}, "", err
+	}
+	return user, newPassword, nil
 }
 
 func (r *SQLRepository) ListServicePackages(ctx context.Context) ([]ServicePackage, error) {

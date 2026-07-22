@@ -11,14 +11,19 @@ import (
 
 func (h Handler) saveClientIntakeForm(w http.ResponseWriter, r *http.Request) {
 	viewer := currentUser(r)
-	if viewer.Role != dashboard.RoleStudent {
+	if viewer.Role != dashboard.RoleStudent && viewer.Role != dashboard.RoleOwner && viewer.Role != dashboard.RoleStaff {
 		http.Error(w, "akses ditolak", http.StatusForbidden)
 		return
 	}
+	basePath := "/student/intake"
+	if viewer.Role != dashboard.RoleStudent {
+		basePath = "/" + currentPageRole(viewer.Role).String() + "/intake"
+	}
 	if err := r.ParseForm(); err != nil {
-		http.Redirect(w, r, "/student/intake", http.StatusSeeOther)
+		http.Redirect(w, r, basePath, http.StatusSeeOther)
 		return
 	}
+	clientID := r.FormValue("client_id")
 	input := dashboard.ClientIntakeFormInput{
 		Email:          r.FormValue("email"),
 		FullNameEn:     r.FormValue("full_name_en"),
@@ -41,12 +46,12 @@ func (h Handler) saveClientIntakeForm(w http.ResponseWriter, r *http.Request) {
 		DatesGraduate:  r.FormValue("dates_graduate"),
 		SocialMediaIG:  r.FormValue("social_media_ig"),
 	}
-	_, err := h.store.SaveClientIntakeForm(r.Context(), viewer, input)
+	_, err := h.store.SaveClientIntakeForm(r.Context(), viewer, clientID, input)
 	notice := "Formulir berhasil disimpan."
 	if err != nil {
 		notice = "Gagal menyimpan formulir. Email dan nama lengkap wajib diisi."
 	}
-	http.Redirect(w, r, "/student/intake?notice="+url.QueryEscape(notice), http.StatusSeeOther)
+	http.Redirect(w, r, basePath+"?notice="+url.QueryEscape(notice), http.StatusSeeOther)
 }
 
 func (h Handler) exportClientIntakeForms(w http.ResponseWriter, r *http.Request) {

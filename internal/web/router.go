@@ -97,7 +97,7 @@ func NewRouter(deps Dependencies) http.Handler {
 		r.Post("/institutions/{contactID}/update", h.updateInstitutionContact)
 		r.Post("/institutions/{contactID}/delete", h.deleteInstitutionContact)
 		r.Post("/institutions/{contactID}/move", h.moveInstitutionContact)
-		r.Post("/student/intake/save", h.saveClientIntakeForm)
+		r.Post("/intake/save", h.saveClientIntakeForm)
 		r.Get("/owner/intake/export", h.exportClientIntakeForms)
 		r.Get("/staff/intake/export", h.exportClientIntakeForms)
 		r.Post("/activity/notes/create", h.createActivityNote)
@@ -105,6 +105,10 @@ func NewRouter(deps Dependencies) http.Handler {
 		r.Get("/student/agreement/pdf", h.downloadOwnAgreementPDF)
 		r.Get("/owner/clients/{clientID}/agreement.pdf", h.downloadClientAgreementPDF)
 		r.Get("/staff/clients/{clientID}/agreement.pdf", h.downloadClientAgreementPDF)
+		r.Post("/owner/clients/{clientID}/reset-password", h.resetClientPassword)
+		r.Post("/staff/clients/{clientID}/reset-password", h.resetClientPassword)
+		r.Post("/logistics/create", h.createShipment)
+		r.Post("/logistics/{shipmentID}/received", h.markShipmentReceived)
 		r.Post("/chat/{conversationID}/messages", h.postChatMessage)
 		r.Get("/ws/chat/{conversationID}", h.chatWebSocket)
 		r.Get("/client", h.clientAlias)
@@ -168,6 +172,7 @@ func (h Handler) page(w http.ResponseWriter, r *http.Request) {
 		ShowCreateForm:   r.URL.Query().Get("new") == "1",
 		ShowStageManager: r.URL.Query().Get("manage") == "1",
 		FilterDate:       r.URL.Query().Get("date"),
+		EditClientID:     r.URL.Query().Get("edit"),
 	})
 	if err != nil {
 		if errors.Is(err, dashboard.ErrForbidden) {

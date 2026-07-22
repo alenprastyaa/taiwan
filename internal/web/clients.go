@@ -1,8 +1,11 @@
 package web
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
+
+	"github.com/go-chi/chi/v5"
 
 	"university_agency/internal/dashboard"
 )
@@ -34,4 +37,25 @@ func (h Handler) createClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, basePath+"?notice="+url.QueryEscape("Client "+user.Username+" berhasil ditambahkan."), http.StatusSeeOther)
+}
+
+func (h Handler) resetClientPassword(w http.ResponseWriter, r *http.Request) {
+	viewer := currentUser(r)
+	if !canManageStudents(viewer) {
+		http.Error(w, "akses ditolak", http.StatusForbidden)
+		return
+	}
+	basePath := "/" + currentPageRole(viewer.Role).String() + "/clients"
+	clientID := chi.URLParam(r, "clientID")
+	user, newPassword, err := h.store.ResetStudentPassword(r.Context(), viewer, clientID)
+	if err != nil {
+		notice := "Gagal mereset password client."
+		if errors.Is(err, dashboard.ErrForbidden) {
+			notice = "Kamu tidak punya akses untuk mereset password client ini."
+		}
+		http.Redirect(w, r, basePath+"?notice="+url.QueryEscape(notice), http.StatusSeeOther)
+		return
+	}
+	notice := "Password baru untuk " + user.Username + ": " + newPassword + " (catat sekarang, tidak akan ditampilkan lagi)"
+	http.Redirect(w, r, basePath+"?notice="+url.QueryEscape(notice), http.StatusSeeOther)
 }

@@ -16,6 +16,9 @@ type Repository interface {
 	ListSchedules(ctx context.Context, viewer User, viewRole Role) ([]ScheduleItem, error)
 	ListTasks(ctx context.Context, viewer User, viewRole Role) ([]Task, error)
 	ListExpenses(ctx context.Context, viewer User, viewRole Role) ([]Expense, error)
+	ListExpenseCategories(ctx context.Context) ([]string, error)
+	ListShipments(ctx context.Context, viewer User, viewRole Role) ([]Shipment, error)
+	ListShipmentCouriers(ctx context.Context) ([]string, error)
 	ListConversations(ctx context.Context, viewer User) ([]ChatConversation, error)
 	ListMessages(ctx context.Context, viewer User, conversationID string) ([]ChatMessage, error)
 	ListPipelineStages(ctx context.Context) ([]PipelineStage, error)
@@ -50,6 +53,7 @@ type ViewOptions struct {
 	ShowCreateForm   bool
 	ShowStageManager bool
 	FilterDate       string
+	EditClientID     string
 }
 
 type Service struct {
@@ -109,6 +113,21 @@ func (s Service) View(ctx context.Context, appName, appURL string, viewer User, 
 		if vm.Expenses, err = s.repository.ListExpenses(ctx, viewer, role); err != nil {
 			return ViewModel{}, fmt.Errorf("load expenses: %w", err)
 		}
+		if (role == RoleOwner || role == RoleStaff) && section == SectionExpenses {
+			if vm.ExpenseCategories, err = s.repository.ListExpenseCategories(ctx); err != nil {
+				return ViewModel{}, fmt.Errorf("load expense categories: %w", err)
+			}
+		}
+		if section == SectionLogistics {
+			if vm.Shipments, err = s.repository.ListShipments(ctx, viewer, role); err != nil {
+				return ViewModel{}, fmt.Errorf("load shipments: %w", err)
+			}
+			if role == RoleOwner || role == RoleStaff {
+				if vm.ShipmentCouriers, err = s.repository.ListShipmentCouriers(ctx); err != nil {
+					return ViewModel{}, fmt.Errorf("load shipment couriers: %w", err)
+				}
+			}
+		}
 		if role == RoleOwner || role == RoleStaff {
 			if vm.PipelineStages, err = s.repository.ListPipelineStages(ctx); err != nil {
 				return ViewModel{}, fmt.Errorf("load pipeline stages: %w", err)
@@ -146,10 +165,16 @@ func (s Service) View(ctx context.Context, appName, appURL string, viewer User, 
 				}
 			} else {
 				vm.IntakeForms = forms
+				vm.EditClientID = strings.TrimSpace(options.EditClientID)
 			}
 		}
 		if (role == RoleOwner || role == RoleStaff) && section == SectionActivity {
 			if vm.ActivityLog, err = s.repository.ListActivityLog(ctx, viewer, options.FilterDate); err != nil {
+				return ViewModel{}, fmt.Errorf("load activity log: %w", err)
+			}
+		}
+		if role == RoleOwner && section == SectionDashboard {
+			if vm.ActivityLog, err = s.repository.ListActivityLog(ctx, viewer, ""); err != nil {
 				return ViewModel{}, fmt.Errorf("load activity log: %w", err)
 			}
 		}
@@ -257,17 +282,18 @@ func validSection(role Role, section Section) bool {
 			SectionDashboard: true, SectionFinance: true, SectionClients: true, SectionPipeline: true,
 			SectionServices: true, SectionReports: true, SectionSettings: true, SectionOrders: true,
 			SectionInvoices: true, SectionChat: true, SectionTemplates: true, SectionInstitutions: true,
-			SectionIntake: true, SectionActivity: true,
+			SectionIntake: true, SectionActivity: true, SectionLogistics: true,
 		},
 		RoleStaff: {
 			SectionDashboard: true, SectionClients: true, SectionPipeline: true, SectionTasks: true,
 			SectionDocuments: true, SectionExpenses: true, SectionCalendar: true, SectionChat: true,
 			SectionSettings: true, SectionTemplates: true, SectionInstitutions: true, SectionIntake: true,
-			SectionActivity: true,
+			SectionActivity: true, SectionLogistics: true,
 		},
 		RoleStudent: {
 			SectionDashboard: true, SectionProgress: true, SectionDocuments: true, SectionPayments: true,
 			SectionCalendar: true, SectionChat: true, SectionIntake: true, SectionAgreement: true,
+			SectionLogistics: true,
 		},
 	}
 	return allowed[role][section]
@@ -286,6 +312,7 @@ func navigation(role Role, active Section) []NavItem {
 			{Label: "Template Teks", Href: "/owner/templates", Icon: "file"},
 			{Label: "Direktori Institusi", Href: "/owner/institutions", Icon: "users"},
 			{Label: "Data Client / Formulir", Href: "/owner/intake", Icon: "file"},
+			{Label: "Logistik Dokumen", Href: "/owner/logistics", Icon: "briefcase"},
 			{Label: "Aktivitas Staff", Href: "/owner/activity", Icon: "chart"},
 			{Label: "Chat", Href: "/owner/chat", Icon: "chat"},
 			{Label: "Pengaturan", Href: "/owner/settings", Icon: "settings"},
@@ -301,6 +328,7 @@ func navigation(role Role, active Section) []NavItem {
 			{Label: "Template Teks", Href: "/staff/templates", Icon: "file"},
 			{Label: "Direktori Institusi", Href: "/staff/institutions", Icon: "users"},
 			{Label: "Data Client / Formulir", Href: "/staff/intake", Icon: "file"},
+			{Label: "Logistik Dokumen", Href: "/staff/logistics", Icon: "briefcase"},
 			{Label: "Aktivitas Saya", Href: "/staff/activity", Icon: "chart"},
 			{Label: "Chat", Href: "/staff/chat", Icon: "chat"},
 			{Label: "Pengaturan", Href: "/staff/settings", Icon: "settings"},
@@ -310,6 +338,8 @@ func navigation(role Role, active Section) []NavItem {
 			{Label: "Progress Saya", Href: "/student/progress", Icon: "kanban"},
 			{Label: "Dokumen Saya", Href: "/student/documents", Icon: "file"},
 			{Label: "Formulir Data Diri", Href: "/student/intake", Icon: "file"},
+			{Label: "Perjanjian Saya", Href: "/student/agreement", Icon: "file"},
+			{Label: "Logistik Dokumen", Href: "/student/logistics", Icon: "briefcase"},
 			{Label: "Pembayaran", Href: "/student/payments", Icon: "receipt"},
 			{Label: "Jadwal", Href: "/student/calendar", Icon: "calendar"},
 			{Label: "Chat Konsultan", Href: "/student/chat", Icon: "chat"},
@@ -350,6 +380,8 @@ func sectionFromHref(href string) Section {
 		return SectionActivity
 	case "/student/agreement":
 		return SectionAgreement
+	case "/owner/logistics", "/staff/logistics", "/student/logistics":
+		return SectionLogistics
 	case "/owner/chat":
 		return SectionChat
 	case "/staff/tasks":

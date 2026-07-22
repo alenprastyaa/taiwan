@@ -418,6 +418,56 @@ func (r *SQLRepository) ensureInstitutionContactsSeeded(ctx context.Context) err
 	return nil
 }
 
+// defaultExpenseCategories seeds the common expense categories staff record
+// day to day, so the "Pengeluaran" form has ready-made suggestions instead of
+// starting empty. Staff can still type any new category, which is remembered
+// for next time.
+func defaultExpenseCategories() []string {
+	return []string{"Translate", "Legalisir Kemenkumham", "Legalisir Kemenlu", "Visa", "TETO"}
+}
+
+func (r *SQLRepository) ensureExpenseCategoriesSeeded(ctx context.Context) error {
+	var count int
+	if err := r.queryRow(ctx, `SELECT COUNT(*) FROM expense_categories`).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	now := time.Now()
+	for _, name := range defaultExpenseCategories() {
+		if _, err := r.exec(ctx, `INSERT INTO expense_categories (id, name, created_at) VALUES (?, ?, ?)`, newID("expcat"), name, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// defaultShipmentCouriers seeds the common Indonesian couriers used to ship
+// documents both ways, so the "Logistik" form has ready-made suggestions
+// instead of starting empty. Staff can still type any new courier, which is
+// remembered for next time.
+func defaultShipmentCouriers() []string {
+	return []string{"JNE", "J&T Express", "SiCepat", "AnterAja", "Pos Indonesia", "DHL", "TIKI"}
+}
+
+func (r *SQLRepository) ensureShipmentCouriersSeeded(ctx context.Context) error {
+	var count int
+	if err := r.queryRow(ctx, `SELECT COUNT(*) FROM shipment_couriers`).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	now := time.Now()
+	for _, name := range defaultShipmentCouriers() {
+		if _, err := r.exec(ctx, `INSERT INTO shipment_couriers (id, name, created_at) VALUES (?, ?, ?)`, newID("courier"), name, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func seedUser(id, username, password, name, email, phone string, role Role, now time.Time) (User, error) {
 	hash, err := security.HashPassword(password)
 	if err != nil {

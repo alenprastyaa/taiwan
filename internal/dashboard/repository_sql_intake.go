@@ -67,23 +67,38 @@ func validateClientIntakeFormInput(input ClientIntakeFormInput) error {
 	return nil
 }
 
-// SaveClientIntakeForm is student-only, upserting the caller's own single
-// row by find-then-update-or-insert (no ON CONFLICT, to stay dialect-agnostic).
-func (r *SQLRepository) SaveClientIntakeForm(ctx context.Context, viewer User, input ClientIntakeFormInput) (ClientIntakeForm, error) {
-	if viewer.Role != RoleStudent {
+// SaveClientIntakeForm upserts a client's biodata by find-then-update-or-insert
+// (no ON CONFLICT, to stay dialect-agnostic). A student always saves their own
+// single form; owner/staff can save on a specific client's behalf (e.g. to
+// add missing fields or fix a typo), gated the same way as other client-scoped
+// writes — owner sees everyone, staff only their own PIC clients.
+func (r *SQLRepository) SaveClientIntakeForm(ctx context.Context, viewer User, clientID string, input ClientIntakeFormInput) (ClientIntakeForm, error) {
+	if viewer.Role != RoleStudent && viewer.Role != RoleOwner && viewer.Role != RoleStaff {
 		return ClientIntakeForm{}, ErrForbidden
 	}
 	if err := validateClientIntakeFormInput(input); err != nil {
 		return ClientIntakeForm{}, err
 	}
-	clients, err := r.ListClients(ctx, viewer, RoleStudent)
-	if err != nil {
-		return ClientIntakeForm{}, err
+	var client ClientProfile
+	if viewer.Role == RoleStudent {
+		clients, err := r.ListClients(ctx, viewer, RoleStudent)
+		if err != nil {
+			return ClientIntakeForm{}, err
+		}
+		if len(clients) == 0 {
+			return ClientIntakeForm{}, ErrForbidden
+		}
+		client = clients[0]
+	} else {
+		found, err := r.findClientByID(ctx, clientID)
+		if err != nil {
+			return ClientIntakeForm{}, err
+		}
+		if viewer.Role == RoleStaff && found.PICStaffID != viewer.ID {
+			return ClientIntakeForm{}, ErrForbidden
+		}
+		client = found
 	}
-	if len(clients) == 0 {
-		return ClientIntakeForm{}, ErrForbidden
-	}
-	client := clients[0]
 	now := time.Now()
 
 	existing, err := r.findIntakeFormByClientID(ctx, client.ID)

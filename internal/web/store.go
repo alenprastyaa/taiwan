@@ -31,6 +31,8 @@ type Store interface {
 	SaveMessage(ctx context.Context, viewer dashboard.User, conversationID, body string) (dashboard.ChatMessage, error)
 	CreateTask(ctx context.Context, viewer dashboard.User, input dashboard.CreateTaskInput) (dashboard.Task, error)
 	CreateExpense(ctx context.Context, viewer dashboard.User, input dashboard.CreateExpenseInput) (dashboard.Expense, error)
+	CreateShipment(ctx context.Context, viewer dashboard.User, input dashboard.CreateShipmentInput) (dashboard.Shipment, error)
+	MarkShipmentReceived(ctx context.Context, viewer dashboard.User, shipmentID string) (dashboard.Shipment, error)
 	CreateSchedule(ctx context.Context, viewer dashboard.User, input dashboard.CreateScheduleInput) (dashboard.ScheduleItem, error)
 	BulkApproveDocuments(ctx context.Context, viewer dashboard.User) (int, error)
 	CreatePipelineStage(ctx context.Context, viewer dashboard.User, name string) (dashboard.PipelineStage, error)
@@ -38,6 +40,7 @@ type Store interface {
 	DeletePipelineStage(ctx context.Context, viewer dashboard.User, stageID string) error
 	ReorderPipelineStage(ctx context.Context, viewer dashboard.User, stageID, direction string) error
 	UpdateClientStage(ctx context.Context, viewer dashboard.User, clientID, stageName string) (dashboard.ClientProfile, error)
+	ResetStudentPassword(ctx context.Context, viewer dashboard.User, clientID string) (dashboard.User, string, error)
 	CreateServicePackage(ctx context.Context, viewer dashboard.User, input dashboard.ServicePackageInput) (dashboard.ServicePackage, error)
 	UpdateServicePackage(ctx context.Context, viewer dashboard.User, packageID string, input dashboard.ServicePackageInput) (dashboard.ServicePackage, error)
 	DeleteServicePackage(ctx context.Context, viewer dashboard.User, packageID string) error
@@ -50,7 +53,7 @@ type Store interface {
 	UpdateInstitutionContact(ctx context.Context, viewer dashboard.User, contactID string, input dashboard.InstitutionContactInput) (dashboard.InstitutionContact, error)
 	DeleteInstitutionContact(ctx context.Context, viewer dashboard.User, contactID string) error
 	ReorderInstitutionContact(ctx context.Context, viewer dashboard.User, contactID, direction string) error
-	SaveClientIntakeForm(ctx context.Context, viewer dashboard.User, input dashboard.ClientIntakeFormInput) (dashboard.ClientIntakeForm, error)
+	SaveClientIntakeForm(ctx context.Context, viewer dashboard.User, clientID string, input dashboard.ClientIntakeFormInput) (dashboard.ClientIntakeForm, error)
 	CreateActivityNote(ctx context.Context, viewer dashboard.User, clientID, note string) (dashboard.ActivityLog, error)
 	HasSignedAgreement(ctx context.Context, viewer dashboard.User) (bool, error)
 	SignAgreement(ctx context.Context, viewer dashboard.User, fullNameTyped, ipAddress, userAgent string) (dashboard.ClientAgreement, error)

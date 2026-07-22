@@ -129,6 +129,31 @@ func postgresSchema() []string {
 		)`,
 		`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS receipt_file_name VARCHAR(255) NOT NULL DEFAULT ''`,
 		`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS receipt_storage_path TEXT NOT NULL DEFAULT ''`,
+		`CREATE TABLE IF NOT EXISTS expense_categories (
+			id VARCHAR(64) PRIMARY KEY,
+			name VARCHAR(96) NOT NULL UNIQUE,
+			created_at TIMESTAMPTZ NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS shipments (
+			id VARCHAR(64) PRIMARY KEY,
+			client_id VARCHAR(64) NOT NULL,
+			staff_id VARCHAR(64) NOT NULL,
+			direction VARCHAR(16) NOT NULL,
+			courier VARCHAR(96) NOT NULL DEFAULT '',
+			tracking_number VARCHAR(128) NOT NULL DEFAULT '',
+			contents TEXT NOT NULL DEFAULT '',
+			sender_address TEXT NOT NULL DEFAULT '',
+			recipient_address TEXT NOT NULL DEFAULT '',
+			status VARCHAR(32) NOT NULL,
+			shipped_date_label VARCHAR(96) NOT NULL DEFAULT '',
+			received_date_label VARCHAR(96) NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS shipment_couriers (
+			id VARCHAR(64) PRIMARY KEY,
+			name VARCHAR(96) NOT NULL UNIQUE,
+			created_at TIMESTAMPTZ NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS chat_conversations (
 			id VARCHAR(64) PRIMARY KEY,
 			client_id VARCHAR(64) NOT NULL,
@@ -330,6 +355,33 @@ func mysqlSchema() []string {
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 		`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS receipt_file_name VARCHAR(255) NOT NULL DEFAULT ''`,
 		`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS receipt_storage_path VARCHAR(1024) NOT NULL DEFAULT ''`,
+		`CREATE TABLE IF NOT EXISTS expense_categories (
+			id VARCHAR(64) PRIMARY KEY,
+			name VARCHAR(96) NOT NULL,
+			created_at TIMESTAMP NOT NULL,
+			UNIQUE KEY expense_categories_name_unique (name)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS shipments (
+			id VARCHAR(64) PRIMARY KEY,
+			client_id VARCHAR(64) NOT NULL,
+			staff_id VARCHAR(64) NOT NULL,
+			direction VARCHAR(16) NOT NULL,
+			courier VARCHAR(96) NOT NULL DEFAULT '',
+			tracking_number VARCHAR(128) NOT NULL DEFAULT '',
+			contents TEXT NOT NULL,
+			sender_address TEXT NOT NULL,
+			recipient_address TEXT NOT NULL,
+			status VARCHAR(32) NOT NULL,
+			shipped_date_label VARCHAR(96) NOT NULL DEFAULT '',
+			received_date_label VARCHAR(96) NOT NULL DEFAULT '',
+			created_at TIMESTAMP NOT NULL
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS shipment_couriers (
+			id VARCHAR(64) PRIMARY KEY,
+			name VARCHAR(96) NOT NULL,
+			created_at TIMESTAMP NOT NULL,
+			UNIQUE KEY shipment_couriers_name_unique (name)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 		`CREATE TABLE IF NOT EXISTS chat_conversations (
 			id VARCHAR(64) PRIMARY KEY,
 			client_id VARCHAR(64) NOT NULL,

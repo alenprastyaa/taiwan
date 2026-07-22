@@ -199,6 +199,8 @@ func ownerContent(vm dashboard.ViewModel) string {
 		return ownerIntakeTable(vm)
 	case dashboard.SectionActivity:
 		return ownerActivity(vm)
+	case dashboard.SectionLogistics:
+		return staffLogistics(vm)
 	case dashboard.SectionChat:
 		return chatPanel(vm, "Chat Operasional")
 	case dashboard.SectionSettings:
@@ -230,6 +232,8 @@ func staffContent(vm dashboard.ViewModel) string {
 		return ownerIntakeTable(vm)
 	case dashboard.SectionActivity:
 		return staffActivity(vm)
+	case dashboard.SectionLogistics:
+		return staffLogistics(vm)
 	case dashboard.SectionChat:
 		return chatPanel(vm, "Chat Klien")
 	case dashboard.SectionSettings:
@@ -249,6 +253,8 @@ func studentContent(vm dashboard.ViewModel) string {
 		return studentIntakeForm(vm)
 	case dashboard.SectionAgreement:
 		return studentAgreementPage(vm)
+	case dashboard.SectionLogistics:
+		return studentLogistics(vm)
 	case dashboard.SectionPayments:
 		return studentPayments(vm)
 	case dashboard.SectionCalendar:
@@ -294,18 +300,7 @@ func ownerDashboard(vm dashboard.ViewModel) string {
       <div class="total-row"><span>Total omzet lunas</span><strong>` + money(revenue) + `</strong></div>
     </div>
 
-    <div class="panel">
-      <div class="panel-head"><h2>Pipeline Keseluruhan</h2><a href="/owner/pipeline" hx-get="/owner/pipeline" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Detail</a></div>
-      <div class="pipeline-bars">
-        <div><span>Konsultasi</span><div><i class="w-[24%] bg-violet-500"></i></div><b>32</b><em>24%</em></div>
-        <div><span>Persiapan Dokumen</span><div><i class="w-[21%] bg-blue-500"></i></div><b>28</b><em>21%</em></div>
-        <div><span>Apply / Proses</span><div><i class="w-[19%] bg-sky-500"></i></div><b>26</b><em>19%</em></div>
-        <div><span>LOA</span><div><i class="w-[12%] bg-teal-500"></i></div><b>16</b><em>12%</em></div>
-        <div><span>Visa</span><div><i class="w-[15%] bg-emerald-500"></i></div><b>20</b><em>15%</em></div>
-        <div><span>Keberangkatan</span><div><i class="w-[7%] bg-lime-500"></i></div><b>9</b><em>7%</em></div>
-        <div><span>Selesai</span><div><i class="w-full bg-amber-500"></i></div><b>58</b><em>100%</em></div>
-      </div>
-    </div>
+    ` + ownerPipelineSummaryPanel(vm.Clients, vm.PipelineStages) + `
 
     <div class="panel">
       <div class="panel-head"><h2>Keuangan Bulan Ini</h2><a href="/owner/finance" hx-get="/owner/finance" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Detail</a></div>
@@ -319,25 +314,103 @@ func ownerDashboard(vm dashboard.ViewModel) string {
   </section>
 
   <section class="grid gap-5 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,.9fr)]">
-    <div class="panel">
-      <div class="panel-head"><h2>Recent Activity</h2></div>
-      <div class="activity-grid">
-        <div><span class="avatar-mini bg-blue-100 text-blue-700">RP</span><p><strong>Ricky Pratama</strong>Order #LS-2026-0123 selesai</p><em>2 jam lalu</em></div>
-        <div><span class="avatar-mini bg-emerald-100 text-emerald-700">SA</span><p><strong>Siti Aisyah</strong>DP diterima Rp 7.500.000</p><em>3 jam lalu</em></div>
-        <div><span class="avatar-mini bg-violet-100 text-violet-700">DL</span><p><strong>Dewi Lestari</strong>LOA diterima dari NTU</p><em>5 jam lalu</em></div>
-        <div><span class="avatar-mini bg-amber-100 text-amber-700">AW</span><p><strong>Andi Wijaya</strong>Pembayaran tahap 2</p><em>1 hari lalu</em></div>
-      </div>
-    </div>
-    <div class="panel">
-      <div class="panel-head"><h2>Reminder</h2><a href="/owner/clients" hx-get="/owner/clients" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Semua</a></div>
-      <ul class="reminder-list">
-        <li><span class="alert-dot amber"></span>3 invoice jatuh tempo hari ini</li>
-        <li><span class="alert-dot red"></span>5 pembayaran belum diverifikasi</li>
-        <li><span class="alert-dot red"></span>2 dokumen mahasiswa kedaluwarsa</li>
-      </ul>
-    </div>
+    ` + ownerRecentActivityPanel(vm.ActivityLog) + `
+    ` + ownerReminderPanel(vm.Orders, vm.Documents) + `
   </section>
 </div>`
+}
+
+// ownerPipelineSummaryPanel renders real client-per-stage counts instead of
+// placeholder numbers, reusing each stage's configured tone color
+// (toneHex) so it stays in sync with the pipeline board itself.
+func ownerPipelineSummaryPanel(clients []dashboard.ClientProfile, stages []dashboard.PipelineStage) string {
+	counts := make(map[string]int, len(stages))
+	for _, client := range clients {
+		counts[client.CurrentStage]++
+	}
+	total := len(clients)
+	var bars strings.Builder
+	for _, stage := range stages {
+		count := counts[stage.Name]
+		percent := 0
+		if total > 0 {
+			percent = count * 100 / total
+		}
+		bars.WriteString(`<div><span>` + esc(stage.Name) + `</span><div><i style="width:` + intText(percent) + `%;background:` + toneHex(stage.Tone) + `"></i></div><b>` + intText(count) + `</b><em>` + intText(percent) + `%</em></div>`)
+	}
+	if len(stages) == 0 {
+		bars.WriteString(`<p class="empty-note">Belum ada tahap pipeline yang dikonfigurasi.</p>`)
+	}
+	return `<div class="panel">
+      <div class="panel-head"><h2>Pipeline Keseluruhan</h2><a href="/owner/pipeline" hx-get="/owner/pipeline" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Detail</a></div>
+      <div class="pipeline-bars">` + bars.String() + `</div>
+    </div>`
+}
+
+var activityAvatarTones = []string{"bg-blue-100 text-blue-700", "bg-emerald-100 text-emerald-700", "bg-violet-100 text-violet-700", "bg-amber-100 text-amber-700"}
+
+// ownerRecentActivityPanel shows the real activity log (most recent first)
+// instead of fabricated names, matching the feed already used on the
+// dedicated Activity page.
+func ownerRecentActivityPanel(entries []dashboard.ActivityLog) string {
+	const maxShown = 5
+	var rows strings.Builder
+	shown := 0
+	for _, entry := range entries {
+		if shown >= maxShown {
+			break
+		}
+		actor := entry.StaffName
+		if actor == "" {
+			actor = "Sistem"
+		}
+		tone := activityAvatarTones[shown%len(activityAvatarTones)]
+		rows.WriteString(`<div><span class="avatar-mini ` + tone + `">` + esc(initials(actor)) + `</span><p><strong>` + esc(actor) + `</strong>` + esc(entry.Description) + `</p><em>` + timeAgoLabel(entry.CreatedAt) + `</em></div>`)
+		shown++
+	}
+	if shown == 0 {
+		rows.WriteString(`<p class="empty-note">Belum ada aktivitas tercatat.</p>`)
+	}
+	return `<div class="panel">
+      <div class="panel-head"><h2>Recent Activity</h2><a href="/owner/activity" hx-get="/owner/activity" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Semua</a></div>
+      <div class="activity-grid">` + rows.String() + `</div>
+    </div>`
+}
+
+// ownerReminderPanel surfaces real, actionable counts instead of static
+// copy: invoices due today or overdue, unverified payments, and documents
+// awaiting revision.
+func ownerReminderPanel(orders []dashboard.Order, documents []dashboard.Document) string {
+	endOfToday := time.Now().Truncate(24 * time.Hour).Add(24 * time.Hour)
+	dueCount := 0
+	for _, order := range orders {
+		if order.Status != dashboard.OrderPaid && !order.DueDate.IsZero() && order.DueDate.Before(endOfToday) {
+			dueCount++
+		}
+	}
+	waitingCount := countWaitingOrders(orders)
+	revisionCount := 0
+	for _, document := range documents {
+		if document.Status == dashboard.DocumentRevision {
+			revisionCount++
+		}
+	}
+	items := []struct {
+		tone  string
+		label string
+	}{
+		{"amber", intText(dueCount) + " invoice jatuh tempo/terlambat"},
+		{"red", intText(waitingCount) + " pembayaran belum diverifikasi"},
+		{"amber", intText(revisionCount) + " dokumen client perlu revisi"},
+	}
+	var lis strings.Builder
+	for _, item := range items {
+		lis.WriteString(`<li><span class="alert-dot ` + item.tone + `"></span>` + esc(item.label) + `</li>`)
+	}
+	return `<div class="panel">
+      <div class="panel-head"><h2>Reminder</h2><a href="/owner/clients" hx-get="/owner/clients" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Semua</a></div>
+      <ul class="reminder-list">` + lis.String() + `</ul>
+    </div>`
 }
 
 func ownerFinance(vm dashboard.ViewModel) string {
@@ -418,7 +491,8 @@ func clientsPanel(vm dashboard.ViewModel, includeStaffFilter bool) string {
 
 	var rows strings.Builder
 	for i, client := range clients {
-		rows.WriteString(`<tr><td>` + intText(i+1) + `</td><td><strong>` + esc(client.Name) + `</strong><span>` + esc(client.Email) + `</span></td><td>` + esc(client.PackageName) + `</td><td>` + esc(client.PICName) + `</td><td>` + esc(client.Status) + `</td><td><span class="progress-line"><i style="width:` + percentStyle(client.Progress) + `"></i></span>` + intText(client.Progress) + `%</td><td>` + esc(client.LastSchedule) + `</td><td><a class="icon-action" href="/` + attr(vm.Role.String()) + `/chat" hx-get="/` + attr(vm.Role.String()) + `/chat" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Chat</a> <a class="icon-action" href="/` + attr(vm.Role.String()) + `/clients/` + attr(client.ID) + `/agreement.pdf">Perjanjian</a></td></tr>`)
+		resetConfirm := "Reset password " + client.Name + "? Password baru akan digenerate dan ditampilkan sekali."
+		rows.WriteString(`<tr><td>` + intText(i+1) + `</td><td><strong>` + esc(client.Name) + `</strong><span>` + esc(client.Email) + `</span></td><td>` + esc(client.PackageName) + `</td><td>` + esc(client.PICName) + `</td><td>` + esc(client.Status) + `</td><td><span class="progress-line"><i style="width:` + percentStyle(client.Progress) + `"></i></span>` + intText(client.Progress) + `%</td><td>` + esc(client.LastSchedule) + `</td><td><a class="icon-action" href="/` + attr(vm.Role.String()) + `/chat" hx-get="/` + attr(vm.Role.String()) + `/chat" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Chat</a> <a class="icon-action" href="/` + attr(vm.Role.String()) + `/clients/` + attr(client.ID) + `/agreement.pdf">Perjanjian</a> <form method="post" action="/` + attr(vm.Role.String()) + `/clients/` + attr(client.ID) + `/reset-password" class="inline-form" data-confirm="` + attr(resetConfirm) + `"><button type="submit" class="icon-action">Reset Password</button></form></td></tr>`)
 	}
 	if rows.Len() == 0 {
 		rows.WriteString(`<tr><td colspan="8">Belum ada client yang cocok dengan filter ini.</td></tr>`)
@@ -827,6 +901,14 @@ func clientSelectOptions(clients []dashboard.ClientProfile) string {
 	return opts.String()
 }
 
+func expenseCategoryOptions(categories []string) string {
+	var opts strings.Builder
+	for _, category := range categories {
+		opts.WriteString(`<option value="` + attr(category) + `">`)
+	}
+	return opts.String()
+}
+
 func toggleFormButton(showForm bool, label, basePath string) string {
 	if showForm {
 		return `<a class="outline-button" href="` + attr(basePath) + `" hx-get="` + attr(basePath) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Batal</a>`
@@ -858,7 +940,7 @@ func staffDocuments(vm dashboard.ViewModel) string {
 func staffExpenses(vm dashboard.ViewModel) string {
 	form := ""
 	if vm.ShowCreateForm {
-		form = `<form method="post" action="/staff/expenses/create" enctype="multipart/form-data" class="student-upload-form"><label>Client<select name="client_id" required><option value="">Pilih client</option>` + clientSelectOptions(vm.Clients) + `</select></label><label>Keperluan / Berkas<input name="need" required placeholder="Contoh: Translate ijazah"></label><label>Kategori<input name="category" placeholder="Translate, Legalisir, Medical, dll"></label><label>Nominal (IDR)<input name="amount" type="number" min="1" required placeholder="450000"></label><label>Tanggal<input name="date_label" placeholder="25/06/2026"></label><label>Keterangan<input name="description" placeholder="Catatan tambahan"></label><label>Bukti pengeluaran<input name="receipt_file" type="file"></label><button class="primary-button" type="submit">Simpan Pengeluaran</button></form>`
+		form = `<form method="post" action="/staff/expenses/create" enctype="multipart/form-data" class="student-upload-form"><label>Client<select name="client_id" required><option value="">Pilih client</option>` + clientSelectOptions(vm.Clients) + `</select></label><label>Keperluan / Berkas<input name="need" required placeholder="Contoh: Translate ijazah"></label><label>Kategori<input name="category" list="expense-category-list" placeholder="Pilih atau ketik kategori baru" autocomplete="off"><datalist id="expense-category-list">` + expenseCategoryOptions(vm.ExpenseCategories) + `</datalist></label><label>Nominal (IDR)<input name="amount" type="number" min="1" required placeholder="450000"></label><label>Tanggal<input name="date_label" placeholder="25/06/2026"></label><label>Keterangan<input name="description" placeholder="Catatan tambahan"></label><label>Bukti pengeluaran<input name="receipt_file" type="file"></label><button class="primary-button" type="submit">Simpan Pengeluaran</button></form>`
 	}
 	return `<div class="panel"><div class="toolbar-row mb-4"><div><h2 class="text-lg font-semibold">Pengeluaran Operasional</h2><p class="text-sm text-slate-500">Input kategori, nominal, bukti, dan keterangan untuk owner approval.</p></div>` + toggleFormButton(vm.ShowCreateForm, "+ Catat Pengeluaran", "/staff/expenses") + `</div>` + form + expensesTable(vm.Expenses) + `</div>`
 }
@@ -1546,6 +1628,25 @@ func dateLabel(value time.Time) string {
 		return "-"
 	}
 	return value.Format("02 Jan 2006")
+}
+
+func timeAgoLabel(value time.Time) string {
+	if value.IsZero() {
+		return "-"
+	}
+	elapsed := time.Since(value)
+	switch {
+	case elapsed < time.Minute:
+		return "Baru saja"
+	case elapsed < time.Hour:
+		return intText(int(elapsed.Minutes())) + " menit lalu"
+	case elapsed < 24*time.Hour:
+		return intText(int(elapsed.Hours())) + " jam lalu"
+	case elapsed < 7*24*time.Hour:
+		return intText(int(elapsed.Hours()/24)) + " hari lalu"
+	default:
+		return dateLabel(value)
+	}
 }
 
 func orderStatusLabel(status dashboard.OrderStatus) string {
