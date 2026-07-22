@@ -299,7 +299,7 @@ func validSection(role Role, section Section) bool {
 		RoleStudent: {
 			SectionDashboard: true, SectionProgress: true, SectionDocuments: true, SectionPayments: true,
 			SectionCalendar: true, SectionChat: true, SectionIntake: true, SectionAgreement: true,
-			SectionLogistics: true,
+			SectionLogistics: true, SectionSettings: true,
 		},
 	}
 	return allowed[role][section]
