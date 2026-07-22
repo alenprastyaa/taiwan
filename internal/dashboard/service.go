@@ -171,7 +171,6 @@ func (s Service) View(ctx context.Context, appName, appURL string, viewer User, 
 				}
 			} else {
 				vm.IntakeForms = forms
-				vm.EditClientID = strings.TrimSpace(options.EditClientID)
 			}
 		}
 		if (role == RoleOwner || role == RoleStaff) && section == SectionActivity {
@@ -208,6 +207,7 @@ func (s Service) View(ctx context.Context, appName, appURL string, viewer User, 
 	}
 
 	vm.ActiveOrderCode = options.OrderCode
+	vm.EditClientID = strings.TrimSpace(options.EditClientID)
 	vm.InvoiceFilter = options.InvoiceFilter
 	vm.FilterStatus = options.ClientStatus
 	vm.FilterPackage = options.ClientPackage
