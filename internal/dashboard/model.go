@@ -173,6 +173,16 @@ type UpdateStaffInput struct {
 	Phone string
 }
 
+// UpdateOwnProfileInput is the self-service counterpart to UpdateStaffInput —
+// any logged-in user (owner, staff, or client) editing their own name,
+// email, or phone, as opposed to an owner editing someone else's staff
+// account.
+type UpdateOwnProfileInput struct {
+	Name  string
+	Email string
+	Phone string
+}
+
 type CreateTaskInput struct {
 	ClientID  string
 	TimeLabel string

@@ -206,7 +206,7 @@ func ownerContent(vm dashboard.ViewModel) string {
 	case dashboard.SectionChat:
 		return chatPanel(vm, "Chat Operasional")
 	case dashboard.SectionSettings:
-		return settingsPanel("Owner", true)
+		return settingsPanel(vm, "Owner", true)
 	default:
 		return ownerDashboard(vm)
 	}
@@ -239,7 +239,7 @@ func staffContent(vm dashboard.ViewModel) string {
 	case dashboard.SectionChat:
 		return chatPanel(vm, "Chat Klien")
 	case dashboard.SectionSettings:
-		return settingsPanel("Staff", false)
+		return settingsPanel(vm, "Staff", false)
 	default:
 		return staffDashboard(vm)
 	}
@@ -266,6 +266,8 @@ func studentContent(vm dashboard.ViewModel) string {
 			return lockedStudentFeature("Chat dibuka setelah pembayaran", "Kirim bukti pembayaran atau tunggu invoice ditandai lunas agar chat konsultan aktif.")
 		}
 		return chatPanel(vm, "Chat Konsultan")
+	case dashboard.SectionSettings:
+		return settingsPanel(vm, "Client", false)
 	default:
 		return studentDashboard(vm)
 	}
@@ -1042,7 +1044,7 @@ func studentPayments(vm dashboard.ViewModel) string {
 	return `<div class="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]"><aside class="panel"><h2 class="mb-4 text-base font-semibold">Daftar Invoice</h2><div class="invoice-list">` + invoiceList.String() + `</div></aside><section class="panel"><div class="invoice-head"><div><p>Detail Invoice</p><strong>` + esc(active.Code) + `</strong></div><strong class="text-2xl">` + money(active.Total) + `</strong></div><dl class="detail-grid"><div><dt>Client</dt><dd>` + esc(active.ClientName) + `</dd></div><div><dt>Paket</dt><dd>` + esc(active.PackageName) + `</dd></div><div><dt>Status</dt><dd><span class="status ` + orderStatusClass(active.Status) + `">` + esc(orderStatusLabel(active.Status)) + `</span></dd></div><div><dt>Jatuh Tempo</dt><dd>` + esc(dateLabel(active.DueDate)) + `</dd></div></dl><div class="invoice-box"><h3>Rincian</h3><div><span>Subtotal</span><strong>` + money(active.Total) + `</strong></div><div><span>Sudah Dibayar</span><strong>` + money(active.Paid) + `</strong></div><div class="total"><span>Sisa</span><strong>` + money(remaining) + `</strong></div></div>` + paymentAction + `</section></div>`
 }
 
-func settingsPanel(role string, includeFinance bool) string {
+func settingsPanel(vm dashboard.ViewModel, role string, includeFinance bool) string {
 	finance := ""
 	if includeFinance {
 		finance = `<div><span>Keuangan</span><strong>Owner only</strong><em>Aktif</em></div>`
@@ -1059,7 +1061,16 @@ func settingsPanel(role string, includeFinance bool) string {
   </form>
 </div>`
 	}
-	return `<div class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,.8fr)]"><div class="panel"><h2 class="mb-4 text-lg font-semibold">Preferensi ` + esc(role) + `</h2><div class="settings-list"><div><span>Autentikasi</span><strong>Password + session aman</strong><em>Aktif</em></div><div><span>Notifikasi</span><strong>Email dan WhatsApp reminder</strong><em>Aktif</em></div><div><span>PWA</span><strong>Installable di Android</strong><em>Aktif</em></div>` + finance + `<div><span>SEO</span><strong>Metadata per halaman</strong><em>Aktif</em></div></div></div><div class="panel"><h2 class="mb-4 text-lg font-semibold">Keamanan</h2><p class="text-sm leading-6 text-slate-600">Aplikasi menggunakan security headers, konfigurasi via environment, timeout server, dan graceful shutdown. Hak akses disiapkan per role agar staff tidak melihat laporan profit dan client hanya melihat data miliknya sendiri.</p></div></div>` + dangerZone
+
+	viewer := vm.Viewer
+	profilePanel := `<div class="panel"><h2 class="mb-4 text-lg font-semibold">Edit Profil</h2><form method="post" action="/profile/update" class="student-upload-form"><label>Nama Lengkap<input name="name" value="` + attr(viewer.Name) + `" required maxlength="191"></label><label>Username<input value="` + attr(viewer.Username) + `" disabled></label><label>Email<input name="email" type="email" value="` + attr(viewer.Email) + `" maxlength="191"></label><label>No. WhatsApp<input name="phone" value="` + attr(viewer.Phone) + `" maxlength="64" placeholder="08xxxxxxxxxx"></label><button class="primary-button" type="submit">Simpan Profil</button></form></div>`
+	passwordPanel := `<div class="panel"><h2 class="mb-4 text-lg font-semibold">Ubah Password</h2><form method="post" action="/profile/change-password" class="student-upload-form"><label>Password Saat Ini<input name="current_password" type="password" autocomplete="current-password" required></label><label>Password Baru<input name="new_password" type="password" autocomplete="new-password" minlength="8" required></label><label>Konfirmasi Password Baru<input name="confirm_password" type="password" autocomplete="new-password" minlength="8" required></label><button class="primary-button" type="submit">Ubah Password</button></form></div>`
+
+	return `<div class="space-y-5">
+  <div style="display:grid;gap:1.25rem;grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">` + profilePanel + passwordPanel + `</div>
+  <div class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,.8fr)]"><div class="panel"><h2 class="mb-4 text-lg font-semibold">Preferensi ` + esc(role) + `</h2><div class="settings-list"><div><span>Autentikasi</span><strong>Password + session aman</strong><em>Aktif</em></div><div><span>Notifikasi</span><strong>Email dan WhatsApp reminder</strong><em>Aktif</em></div><div><span>PWA</span><strong>Installable di Android</strong><em>Aktif</em></div>` + finance + `<div><span>SEO</span><strong>Metadata per halaman</strong><em>Aktif</em></div></div></div><div class="panel"><h2 class="mb-4 text-lg font-semibold">Keamanan</h2><p class="text-sm leading-6 text-slate-600">Aplikasi menggunakan security headers, konfigurasi via environment, timeout server, dan graceful shutdown. Hak akses disiapkan per role agar staff tidak melihat laporan profit dan client hanya melihat data miliknya sendiri.</p></div></div>
+  ` + dangerZone + `
+</div>`
 }
 
 func calendarPanel(vm dashboard.ViewModel, title string) string {

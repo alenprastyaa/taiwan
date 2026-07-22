@@ -123,22 +123,6 @@ function bindChat() {
   });
 }
 
-function bindDemoAccounts() {
-  document.querySelectorAll(".demo-account").forEach((button) => {
-    button.addEventListener("click", () => {
-      const form = button.closest(".auth-panel")?.querySelector(".auth-form");
-      const usernameInput = form?.querySelector('[name="username"]');
-      const passwordInput = form?.querySelector('[name="password"]');
-      if (!usernameInput || !passwordInput) {
-        return;
-      }
-      usernameInput.value = button.dataset.demoUsername;
-      passwordInput.value = button.dataset.demoPassword;
-      passwordInput.focus();
-    });
-  });
-}
-
 function bindRejectModal() {
   // Delegated handlers, attached once — survive htmx #app swaps.
   document.addEventListener("click", (event) => {
@@ -269,7 +253,6 @@ document.addEventListener("DOMContentLoaded", () => {
   bindShell();
   bindNavigation();
   bindChat();
-  bindDemoAccounts();
   bindRejectModal();
   bindAutoSubmitSelects();
   bindConfirmForms();

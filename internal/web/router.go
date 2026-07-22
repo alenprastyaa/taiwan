@@ -114,6 +114,8 @@ func NewRouter(deps Dependencies) http.Handler {
 		r.Post("/owner/staff/{staffID}/update", h.updateStaff)
 		r.Post("/owner/staff/{staffID}/toggle-active", h.toggleStaffActive)
 		r.Post("/owner/staff/{staffID}/reset-password", h.resetStaffPassword)
+		r.Post("/profile/update", h.updateProfile)
+		r.Post("/profile/change-password", h.changeOwnPassword)
 		r.Post("/chat/{conversationID}/messages", h.postChatMessage)
 		r.Get("/ws/chat/{conversationID}", h.chatWebSocket)
 		r.Get("/client", h.clientAlias)

@@ -54,7 +54,6 @@ func authHTML(vm AuthPage) string {
 		b.WriteString(`<p class="auth-switch">Sudah punya akun? <a href="/login">Login</a></p>`)
 	} else {
 		b.WriteString(loginForm())
-		b.WriteString(demoAccounts())
 	}
 	b.WriteString(`</section><aside class="auth-side"><div><span>Portal operasional</span><h2>Owner, staff, dan client masuk dari satu pintu.</h2><p>Akses akun dikelola oleh owner dan staff.</p></div></aside></main></body></html>`)
 	return b.String()
@@ -68,19 +67,3 @@ func registerForm() string {
 	return `<form method="post" action="/register" class="auth-form"><label>Nama lengkap<input name="name" autocomplete="name" required autofocus></label><label>Username<input name="username" autocomplete="username" required></label><label>Email<input name="email" type="email" autocomplete="email"></label><label>No. WhatsApp<input name="phone" autocomplete="tel"></label><label>Password<input name="password" type="password" autocomplete="new-password" minlength="8" required></label><button class="primary-button" type="submit">Register Client</button></form>`
 }
 
-func demoAccounts() string {
-	var b strings.Builder
-	b.WriteString(`<div class="demo-accounts"><p class="demo-accounts-title">Akun Demo</p>`)
-	for _, acc := range []struct{ role, label, username, password string }{
-		{"owner", "Owner", "owner", "owner12345"},
-		{"staff", "Staff", "staff", "staff12345"},
-		{"student", "Client", "student", "student12345"},
-	} {
-		b.WriteString(`<button type="button" class="demo-account" data-demo-username="` + template.HTMLEscapeString(acc.username) + `" data-demo-password="` + template.HTMLEscapeString(acc.password) + `">`)
-		b.WriteString(`<span class="demo-account-role">` + template.HTMLEscapeString(acc.label) + `</span>`)
-		b.WriteString(`<span class="demo-account-cred">` + template.HTMLEscapeString(acc.username) + ` / ` + template.HTMLEscapeString(acc.password) + `</span>`)
-		b.WriteString(`</button>`)
-	}
-	b.WriteString(`</div>`)
-	return b.String()
-}

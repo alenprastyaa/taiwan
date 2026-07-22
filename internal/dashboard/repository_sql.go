@@ -1377,6 +1377,38 @@ func (r *SQLRepository) ResetStaffPassword(ctx context.Context, viewer User, sta
 	return user, newPassword, nil
 }
 
+// UpdateOwnProfile lets any logged-in user (owner, staff, or client) edit
+// their own name/email/phone — unlike UpdateStaff, there's no role check
+// beyond "must be editing yourself" since viewer.ID is the target.
+func (r *SQLRepository) UpdateOwnProfile(ctx context.Context, viewer User, input UpdateOwnProfileInput) (User, error) {
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return User{}, ErrInvalidInput
+	}
+	if _, err := r.exec(ctx, `UPDATE users SET name = ?, email = ?, phone = ? WHERE id = ?`, name, strings.TrimSpace(input.Email), strings.TrimSpace(input.Phone), viewer.ID); err != nil {
+		return User{}, err
+	}
+	return r.FindUserByID(ctx, viewer.ID)
+}
+
+// ChangeOwnPassword requires the caller's current password, unlike
+// ResetStudentPassword/ResetStaffPassword (owner/staff resetting someone
+// else's password without knowing the old one).
+func (r *SQLRepository) ChangeOwnPassword(ctx context.Context, viewer User, currentPassword, newPassword string) error {
+	if len(newPassword) < 8 {
+		return ErrInvalidInput
+	}
+	if !security.CheckPassword(viewer.PasswordHash, currentPassword) {
+		return ErrForbidden
+	}
+	hash, err := security.HashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	_, err = r.exec(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, hash, viewer.ID)
+	return err
+}
+
 func (r *SQLRepository) ListServicePackages(ctx context.Context) ([]ServicePackage, error) {
 	rows, err := r.query(ctx, `SELECT id, name, category, description, price, price_is_from, highlights, position, created_at FROM service_packages ORDER BY position ASC`)
 	if err != nil {

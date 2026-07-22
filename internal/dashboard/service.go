@@ -350,6 +350,7 @@ func navigation(role Role, active Section) []NavItem {
 			{Label: "Pembayaran", Href: "/student/payments", Icon: "receipt"},
 			{Label: "Jadwal", Href: "/student/calendar", Icon: "calendar"},
 			{Label: "Chat Konsultan", Href: "/student/chat", Icon: "chat"},
+			{Label: "Pengaturan", Href: "/student/settings", Icon: "settings"},
 		},
 	}
 
