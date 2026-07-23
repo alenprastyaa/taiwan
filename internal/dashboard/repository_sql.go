@@ -251,10 +251,54 @@ func (r *SQLRepository) CreateStudent(ctx context.Context, input CreateStudentIn
 	if _, err := r.txExec(ctx, tx, `INSERT INTO activity_log (id, staff_id, client_id, action_type, description, created_at) VALUES (?, ?, ?, ?, ?, ?)`, newID("activity"), staff.ID, client.ID, "client_created", "Client baru ditambahkan: "+client.Name, now); err != nil {
 		return User{}, err
 	}
+	if input.InvoiceTotal > 0 {
+		paid := input.AmountPaid
+		if paid < 0 {
+			paid = 0
+		}
+		if paid > input.InvoiceTotal {
+			paid = input.InvoiceTotal
+		}
+		status := OrderUnpaid
+		var paidAt *time.Time
+		if paid >= input.InvoiceTotal {
+			status = OrderPaid
+			paidAt = &now
+		}
+		order := Order{
+			ID:          newID("order"),
+			Code:        newOrderCode(now),
+			ClientID:    client.ID,
+			PackageName: client.PackageName,
+			Total:       input.InvoiceTotal,
+			Paid:        paid,
+			Status:      status,
+			DueDate:     now.AddDate(0, 0, 7),
+			CreatedAt:   now,
+			PaidAt:      paidAt,
+		}
+		if _, err := r.txExec(ctx, tx, `INSERT INTO orders (id, code, client_id, package_name, total, paid, status, due_date, created_at, paid_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, order.ID, order.Code, order.ClientID, order.PackageName, order.Total, order.Paid, order.Status, order.DueDate, order.CreatedAt, order.PaidAt); err != nil {
+			return User{}, err
+		}
+		description := fmt.Sprintf("Invoice %s dibuat: total Rp%d, uang masuk Rp%d", order.Code, order.Total, order.Paid)
+		if _, err := r.txExec(ctx, tx, `INSERT INTO activity_log (id, staff_id, client_id, action_type, description, created_at) VALUES (?, ?, ?, ?, ?, ?)`, newID("activity"), staff.ID, client.ID, "invoice_created", description, now); err != nil {
+			return User{}, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return User{}, err
 	}
 	return user, nil
+}
+
+// newOrderCode mints a human-readable, effectively-unique invoice code
+// (orders.code has a UNIQUE constraint) without needing a sequence table.
+func newOrderCode(now time.Time) string {
+	buf := make([]byte, 3)
+	if _, err := rand.Read(buf); err != nil {
+		return fmt.Sprintf("ORD-%d-%06d", now.Year(), now.UnixNano()%1000000)
+	}
+	return fmt.Sprintf("ORD-%d-%s", now.Year(), strings.ToUpper(hex.EncodeToString(buf)))
 }
 
 // ResetTestData permanently wipes every client-linked and transactional row
@@ -670,6 +714,48 @@ func (r *SQLRepository) MarkOrderPaidByCode(ctx context.Context, viewer User, co
 		return Order{}, err
 	}
 	r.logActivity(ctx, viewer.ID, order.ClientID, "order_marked_paid", "Order "+order.Code+" ditandai lunas")
+	return order, nil
+}
+
+// RecordOrderPayment adds an incoming payment to an existing invoice (e.g. a
+// cicilan/installment) instead of marking it fully paid outright. It clamps
+// the running total at the invoice total and flips the order to OrderPaid
+// once fully covered.
+func (r *SQLRepository) RecordOrderPayment(ctx context.Context, viewer User, code string, amount int64) (Order, error) {
+	if viewer.Role != RoleOwner {
+		return Order{}, ErrForbidden
+	}
+	if amount <= 0 {
+		return Order{}, ErrInvalidInput
+	}
+	normalized := strings.ToUpper(strings.TrimSpace(code))
+	if normalized == "" {
+		return Order{}, ErrInvalidInput
+	}
+	order, err := r.findOrderByCode(ctx, normalized)
+	if err != nil {
+		return Order{}, err
+	}
+	if order.Status == OrderPaid {
+		return order, nil
+	}
+	newPaid := order.Paid + amount
+	if newPaid >= order.Total {
+		newPaid = order.Total
+		now := time.Now()
+		if _, err := r.exec(ctx, `UPDATE orders SET paid = ?, status = ?, paid_at = ? WHERE id = ?`, newPaid, OrderPaid, now, order.ID); err != nil {
+			return Order{}, err
+		}
+	} else {
+		if _, err := r.exec(ctx, `UPDATE orders SET paid = ? WHERE id = ?`, newPaid, order.ID); err != nil {
+			return Order{}, err
+		}
+	}
+	order, err = r.findOrderByCode(ctx, normalized)
+	if err != nil {
+		return Order{}, err
+	}
+	r.logActivity(ctx, viewer.ID, order.ClientID, "order_payment_recorded", fmt.Sprintf("Pembayaran Rp%d dicatat untuk order %s", amount, order.Code))
 	return order, nil
 }
 

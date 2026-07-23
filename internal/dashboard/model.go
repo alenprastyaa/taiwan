@@ -148,15 +148,17 @@ type User struct {
 }
 
 type CreateStudentInput struct {
-	Username    string
-	Password    string
-	Name        string
-	Email       string
-	Phone       string
-	PackageName string
-	Country     string
-	Campus      string
-	PICStaffID  string
+	Username     string
+	Password     string
+	Name         string
+	Email        string
+	Phone        string
+	PackageName  string
+	Country      string
+	Campus       string
+	PICStaffID   string
+	InvoiceTotal int64
+	AmountPaid   int64
 }
 
 type CreateStaffInput struct {

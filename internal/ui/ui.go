@@ -511,7 +511,11 @@ func clientsPanel(vm dashboard.ViewModel, includeStaffFilter bool) string {
 		for _, staff := range vm.Staff {
 			staffOptions.WriteString(`<option value="` + attr(staff.ID) + `">` + esc(staff.Name) + `</option>`)
 		}
-		addForm = `<form method="post" action="` + attr(path) + `/create" class="student-upload-form"><label>Nama Lengkap<input name="name" required placeholder="Nama client"></label><label>Username<input name="username" required placeholder="Untuk login client"></label><label>Password<input name="password" type="password" minlength="8" required placeholder="Minimal 8 karakter"></label><label>Email<input name="email" type="email" placeholder="client@email.com"></label><label>No. WhatsApp<input name="phone" placeholder="08xxxxxxxxxx"></label><label>Paket<select name="package_name"><option value="">Belum dipilih</option>` + packageOptions.String() + `</select></label><label>Negara<input name="country" placeholder="Taiwan"></label><label>Kampus<input name="campus" placeholder="Nama kampus"></label><label>PIC Staff<select name="pic_staff_id"><option value="">Otomatis</option>` + staffOptions.String() + `</select></label><button class="primary-button" type="submit">Simpan Client</button></form>`
+		invoiceFields := ""
+		if vm.Role == dashboard.RoleOwner {
+			invoiceFields = `<label>Total Tagihan (IDR)<input name="invoice_total" type="number" min="0" placeholder="7500000"></label><label>Uang Masuk (IDR)<input name="amount_paid" type="number" min="0" placeholder="0"></label>`
+		}
+		addForm = `<form method="post" action="` + attr(path) + `/create" class="student-upload-form"><label>Nama Lengkap<input name="name" required placeholder="Nama client"></label><label>Username<input name="username" required placeholder="Untuk login client"></label><label>Password<input name="password" type="password" minlength="8" required placeholder="Minimal 8 karakter"></label><label>Email<input name="email" type="email" placeholder="client@email.com"></label><label>No. WhatsApp<input name="phone" placeholder="08xxxxxxxxxx"></label><label>Paket<select name="package_name"><option value="">Belum dipilih</option>` + packageOptions.String() + `</select></label><label>Negara<input name="country" placeholder="Taiwan"></label><label>Kampus<input name="campus" placeholder="Nama kampus"></label><label>PIC Staff<select name="pic_staff_id"><option value="">Otomatis</option>` + staffOptions.String() + `</select></label>` + invoiceFields + `<button class="primary-button" type="submit">Simpan Client</button></form>`
 	}
 	return `
 <div class="panel table-panel">
@@ -748,14 +752,16 @@ func ownerInvoices(vm dashboard.ViewModel) string {
 	pdfHref := "/owner/invoices/" + url.QueryEscape(active.Code) + "/invoice.pdf"
 	commActions := `<div class="action-stack"><a class="success-button" href="` + attr(waHref) + `" target="_blank" rel="noopener">Kirim Invoice (WA)</a><a class="primary-button" href="` + attr(mailHref) + `">Kirim Invoice (Email)</a><a class="outline-button" href="` + attr(pdfHref) + `">Download PDF</a></div>`
 
+	recordPaymentForm := `<form method="post" action="/owner/orders/record-payment" class="student-upload-form mt-3"><input type="hidden" name="order_code" value="` + attr(active.Code) + `"><label>Catat Pembayaran Masuk (IDR)<input name="amount" type="number" min="1" max="` + strconv.FormatInt(active.Total-active.Paid, 10) + `" required placeholder="Contoh: 2000000"></label><button class="outline-button" type="submit">Catat Pembayaran</button></form>`
+
 	var statusAction string
 	switch active.Status {
 	case dashboard.OrderPaid:
 		statusAction = `<div class="invoice-status-note is-paid"><strong>Invoice sudah lunas</strong><p>Pembayaran sudah tercatat penuh di sistem.</p></div>`
 	case dashboard.OrderWaitingVerification:
-		statusAction = `<div class="invoice-status-note"><strong>Menunggu verifikasi</strong><p>Client sudah mengirim bukti transfer. Cek bukti pembayaran di samping, lalu konfirmasi jika sudah sesuai.</p><form method="post" action="/owner/orders/mark-paid"><input type="hidden" name="order_code" value="` + attr(active.Code) + `"><button class="success-button" type="submit">Verifikasi &amp; Tandai Lunas</button></form></div>`
+		statusAction = `<div class="invoice-status-note"><strong>Menunggu verifikasi</strong><p>Client sudah mengirim bukti transfer. Cek bukti pembayaran di samping, lalu konfirmasi jika sudah sesuai.</p><form method="post" action="/owner/orders/mark-paid"><input type="hidden" name="order_code" value="` + attr(active.Code) + `"><button class="success-button" type="submit">Verifikasi &amp; Tandai Lunas</button></form>` + recordPaymentForm + `</div>`
 	default:
-		statusAction = `<div class="invoice-status-note"><strong>Belum ada pembayaran</strong><p>Jika client sudah transfer manual di luar sistem, tandai lunas di sini.</p><form method="post" action="/owner/orders/mark-paid"><input type="hidden" name="order_code" value="` + attr(active.Code) + `"><button class="outline-button" type="submit">Tandai Lunas Manual</button></form></div>`
+		statusAction = `<div class="invoice-status-note"><strong>Belum ada pembayaran</strong><p>Catat cicilan yang sudah masuk, atau tandai lunas manual jika client sudah transfer penuh di luar sistem.</p><form method="post" action="/owner/orders/mark-paid"><input type="hidden" name="order_code" value="` + attr(active.Code) + `"><button class="outline-button" type="submit">Tandai Lunas Manual</button></form>` + recordPaymentForm + `</div>`
 	}
 
 	return `

@@ -61,6 +61,7 @@ func NewRouter(deps Dependencies) http.Handler {
 		r.Post("/register", h.register)
 		r.Post("/logout", h.logout)
 		r.Post("/owner/orders/mark-paid", h.markOrderPaid)
+		r.Post("/owner/orders/record-payment", h.recordOrderPayment)
 		r.Post("/student/payments/proof", h.submitPaymentProof)
 		r.Get("/student/payments/{orderCode}/invoice.pdf", h.studentInvoicePDF)
 		r.Get("/owner/invoices/{orderCode}/invoice.pdf", h.studentInvoicePDF)
@@ -323,6 +324,28 @@ func (h Handler) markOrderPaid(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/owner/invoices?notice="+url.QueryEscape("Order "+order.Code+" sudah ditandai lunas."), http.StatusSeeOther)
+}
+
+func (h Handler) recordOrderPayment(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/owner/invoices?notice="+url.QueryEscape("Kode pesanan tidak valid."), http.StatusSeeOther)
+		return
+	}
+	amount, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("amount")), 10, 64)
+	order, err := h.store.RecordOrderPayment(r.Context(), currentUser(r), r.FormValue("order_code"), amount)
+	if err != nil {
+		notice := "Gagal mencatat pembayaran. Pastikan nominal lebih dari 0."
+		if errors.Is(err, dashboard.ErrForbidden) || errors.Is(err, dashboard.ErrNotFound) {
+			notice = "Order tidak ditemukan atau akses ditolak."
+		}
+		http.Redirect(w, r, "/owner/invoices?notice="+url.QueryEscape(notice), http.StatusSeeOther)
+		return
+	}
+	notice := "Pembayaran untuk " + order.Code + " berhasil dicatat."
+	if order.Status == dashboard.OrderPaid {
+		notice = "Pembayaran untuk " + order.Code + " berhasil dicatat, order sudah lunas."
+	}
+	http.Redirect(w, r, "/owner/invoices?order="+url.QueryEscape(order.Code)+"&notice="+url.QueryEscape(notice), http.StatusSeeOther)
 }
 
 func (h Handler) submitPaymentProof(w http.ResponseWriter, r *http.Request) {

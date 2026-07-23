@@ -4,6 +4,8 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -21,7 +23,7 @@ func (h Handler) createClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	basePath := "/" + currentPageRole(viewer.Role).String() + "/clients"
-	user, err := h.store.CreateStudent(r.Context(), dashboard.CreateStudentInput{
+	input := dashboard.CreateStudentInput{
 		Username:    r.FormValue("username"),
 		Password:    r.FormValue("password"),
 		Name:        r.FormValue("name"),
@@ -31,7 +33,12 @@ func (h Handler) createClient(w http.ResponseWriter, r *http.Request) {
 		Country:     r.FormValue("country"),
 		Campus:      r.FormValue("campus"),
 		PICStaffID:  r.FormValue("pic_staff_id"),
-	})
+	}
+	if viewer.Role == dashboard.RoleOwner {
+		input.InvoiceTotal, _ = strconv.ParseInt(strings.TrimSpace(r.FormValue("invoice_total")), 10, 64)
+		input.AmountPaid, _ = strconv.ParseInt(strings.TrimSpace(r.FormValue("amount_paid")), 10, 64)
+	}
+	user, err := h.store.CreateStudent(r.Context(), input)
 	if err != nil {
 		http.Redirect(w, r, basePath+"?new=1&notice="+url.QueryEscape("Gagal menambah client. Username harus unik dan password minimal 8 karakter."), http.StatusSeeOther)
 		return

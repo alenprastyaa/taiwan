@@ -23,6 +23,7 @@ type Store interface {
 	FindUserByID(ctx context.Context, id string) (dashboard.User, error)
 	CreateStudent(ctx context.Context, input dashboard.CreateStudentInput) (dashboard.User, error)
 	MarkOrderPaidByCode(ctx context.Context, viewer dashboard.User, code string) (dashboard.Order, error)
+	RecordOrderPayment(ctx context.Context, viewer dashboard.User, code string, amount int64) (dashboard.Order, error)
 	SubmitPaymentProof(ctx context.Context, viewer dashboard.User, code, note, fileName, storagePath string) (dashboard.Order, error)
 	StudentHasPaymentAccess(ctx context.Context, viewer dashboard.User) (bool, error)
 	UploadStudentDocument(ctx context.Context, viewer dashboard.User, documentName, fileName, storagePath string) (dashboard.Document, error)
