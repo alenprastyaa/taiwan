@@ -134,7 +134,7 @@ func (s Service) View(ctx context.Context, appName, appURL string, viewer User, 
 				return ViewModel{}, fmt.Errorf("load pipeline stages: %w", err)
 			}
 		}
-		if (role == RoleOwner && section == SectionServices) || ((role == RoleOwner || role == RoleStaff) && section == SectionClients) {
+		if (role == RoleOwner && (section == SectionServices || section == SectionInvoices)) || ((role == RoleOwner || role == RoleStaff) && section == SectionClients) {
 			if vm.ServicePackages, err = s.repository.ListServicePackages(ctx); err != nil {
 				return ViewModel{}, fmt.Errorf("load service packages: %w", err)
 			}

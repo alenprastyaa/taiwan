@@ -227,6 +227,20 @@ type ClientProfile struct {
 	LastSchedule string
 	CurrentStage string
 	CreatedAt    time.Time
+	Active       bool
+}
+
+// UpdateClientInput edits an existing client's profile fields. Username and
+// password aren't included here — those go through ResetStudentPassword,
+// mirroring how UpdateStaffInput leaves credentials to a separate action.
+type UpdateClientInput struct {
+	Name        string
+	Email       string
+	Phone       string
+	PackageName string
+	Country     string
+	Campus      string
+	PICStaffID  string
 }
 
 type OrderStatus string
@@ -252,6 +266,27 @@ type Order struct {
 	ProofStoragePath string
 	CreatedAt        time.Time
 	PaidAt           *time.Time
+}
+
+// CreateOrderInput opens a new invoice for an existing client — the
+// standalone counterpart to the InvoiceTotal/AmountPaid fields on
+// CreateStudentInput, for clients who already have an account and need a
+// new/renewal order.
+type CreateOrderInput struct {
+	ClientID    string
+	PackageName string
+	Total       int64
+	Paid        int64
+	DueDate     time.Time
+}
+
+// UpdateOrderInput edits an order's package/total/due date. Paid amount is
+// deliberately excluded — that goes through RecordOrderPayment/
+// MarkOrderPaidByCode so the paid/status invariant stays in one place.
+type UpdateOrderInput struct {
+	PackageName string
+	Total       int64
+	DueDate     time.Time
 }
 
 type DocumentStatus string

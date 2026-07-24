@@ -17,6 +17,7 @@ var (
 	ErrForbidden    = errors.New("forbidden")
 	ErrDuplicate    = errors.New("duplicate")
 	ErrInvalidInput = errors.New("invalid input")
+	ErrConflict     = errors.New("conflict")
 )
 
 type MemoryRepository struct {

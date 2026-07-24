@@ -123,6 +123,40 @@ function bindChat() {
   });
 }
 
+function computeOrderRemaining(form) {
+  const output = form.querySelector("[data-order-remaining]");
+  if (!output) {
+    return;
+  }
+  const total = parseFloat(form.querySelector("[data-order-total]")?.value) || 0;
+  const paid = parseFloat(form.querySelector("[data-order-paid]")?.value) || 0;
+  output.value = Math.max(total - paid, 0).toLocaleString("id-ID");
+}
+
+function bindOrderCalc() {
+  // Delegated so "kekurangan" (remaining balance) recomputes live as owner
+  // types total/uang masuk on the add-client and add/edit-order forms.
+  document.addEventListener("input", (event) => {
+    const field = event.target.closest("[data-order-total], [data-order-paid]");
+    if (!field) {
+      return;
+    }
+    const form = field.closest("form");
+    if (form) {
+      computeOrderRemaining(form);
+    }
+  });
+}
+
+function initOrderCalc() {
+  document.querySelectorAll("[data-order-remaining]").forEach((output) => {
+    const form = output.closest("form");
+    if (form) {
+      computeOrderRemaining(form);
+    }
+  });
+}
+
 function bindRejectModal() {
   // Delegated handlers, attached once — survive htmx #app swaps.
   document.addEventListener("click", (event) => {
@@ -182,6 +216,7 @@ async function loadApp(url, pushState) {
   bindShell();
   bindChat();
   syncTitle();
+  initOrderCalc();
 
   if (pushState) {
     history.pushState({ url }, "", url);
@@ -257,7 +292,9 @@ document.addEventListener("DOMContentLoaded", () => {
   bindAutoSubmitSelects();
   bindConfirmForms();
   bindCopyButtons();
+  bindOrderCalc();
   syncTitle();
+  initOrderCalc();
   registerServiceWorker();
 });
 

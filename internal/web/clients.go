@@ -46,6 +46,69 @@ func (h Handler) createClient(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, basePath+"?notice="+url.QueryEscape("Client "+user.Username+" berhasil ditambahkan."), http.StatusSeeOther)
 }
 
+func (h Handler) updateClient(w http.ResponseWriter, r *http.Request) {
+	viewer := currentUser(r)
+	if !canManageStudents(viewer) {
+		http.Error(w, "akses ditolak", http.StatusForbidden)
+		return
+	}
+	basePath := "/" + currentPageRole(viewer.Role).String() + "/clients"
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		return
+	}
+	clientID := chi.URLParam(r, "clientID")
+	_, err := h.store.UpdateClient(r.Context(), viewer, clientID, dashboard.UpdateClientInput{
+		Name:        r.FormValue("name"),
+		Email:       r.FormValue("email"),
+		Phone:       r.FormValue("phone"),
+		PackageName: r.FormValue("package_name"),
+		Country:     r.FormValue("country"),
+		Campus:      r.FormValue("campus"),
+		PICStaffID:  r.FormValue("pic_staff_id"),
+	})
+	notice := "Data client berhasil diperbarui."
+	if err != nil {
+		notice = "Gagal memperbarui data client. Nama wajib diisi."
+		if errors.Is(err, dashboard.ErrForbidden) {
+			notice = "Kamu tidak punya akses untuk mengubah client ini."
+		}
+	}
+	http.Redirect(w, r, basePath+"?notice="+url.QueryEscape(notice), http.StatusSeeOther)
+}
+
+func (h Handler) toggleClientActive(w http.ResponseWriter, r *http.Request) {
+	viewer := currentUser(r)
+	if viewer.Role != dashboard.RoleOwner {
+		http.Error(w, "akses ditolak", http.StatusForbidden)
+		return
+	}
+	basePath := "/" + currentPageRole(viewer.Role).String() + "/clients"
+	err := h.store.ToggleClientActive(r.Context(), viewer, chi.URLParam(r, "clientID"))
+	notice := "Status client berhasil diperbarui."
+	if err != nil {
+		notice = "Gagal mengubah status client."
+	}
+	http.Redirect(w, r, basePath+"?notice="+url.QueryEscape(notice), http.StatusSeeOther)
+}
+
+func (h Handler) deleteClient(w http.ResponseWriter, r *http.Request) {
+	viewer := currentUser(r)
+	if viewer.Role != dashboard.RoleOwner {
+		http.Error(w, "akses ditolak", http.StatusForbidden)
+		return
+	}
+	basePath := "/" + currentPageRole(viewer.Role).String() + "/clients"
+	err := h.store.DeleteClient(r.Context(), viewer, chi.URLParam(r, "clientID"))
+	notice := "Client berhasil dihapus permanen."
+	if errors.Is(err, dashboard.ErrConflict) {
+		notice = "Client tidak bisa dihapus karena masih punya order, dokumen, task, expense, shipment, atau jadwal. Nonaktifkan saja jika tidak dipakai lagi."
+	} else if err != nil {
+		notice = "Gagal menghapus client."
+	}
+	http.Redirect(w, r, basePath+"?notice="+url.QueryEscape(notice), http.StatusSeeOther)
+}
+
 func (h Handler) resetClientPassword(w http.ResponseWriter, r *http.Request) {
 	viewer := currentUser(r)
 	if !canManageStudents(viewer) {

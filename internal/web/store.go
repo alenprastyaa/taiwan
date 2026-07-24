@@ -42,6 +42,12 @@ type Store interface {
 	ReorderPipelineStage(ctx context.Context, viewer dashboard.User, stageID, direction string) error
 	UpdateClientStage(ctx context.Context, viewer dashboard.User, clientID, stageName string) (dashboard.ClientProfile, error)
 	ResetStudentPassword(ctx context.Context, viewer dashboard.User, clientID string) (dashboard.User, string, error)
+	UpdateClient(ctx context.Context, viewer dashboard.User, clientID string, input dashboard.UpdateClientInput) (dashboard.ClientProfile, error)
+	ToggleClientActive(ctx context.Context, viewer dashboard.User, clientID string) error
+	DeleteClient(ctx context.Context, viewer dashboard.User, clientID string) error
+	CreateOrder(ctx context.Context, viewer dashboard.User, input dashboard.CreateOrderInput) (dashboard.Order, error)
+	UpdateOrder(ctx context.Context, viewer dashboard.User, orderID string, input dashboard.UpdateOrderInput) (dashboard.Order, error)
+	DeleteOrder(ctx context.Context, viewer dashboard.User, orderID string) error
 	CreateStaff(ctx context.Context, viewer dashboard.User, input dashboard.CreateStaffInput) (dashboard.User, error)
 	UpdateStaff(ctx context.Context, viewer dashboard.User, staffID string, input dashboard.UpdateStaffInput) (dashboard.User, error)
 	ToggleStaffActive(ctx context.Context, viewer dashboard.User, staffID string) error

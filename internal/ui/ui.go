@@ -472,6 +472,9 @@ func ownerPipeline(vm dashboard.ViewModel) string {
 
 func clientsPanel(vm dashboard.ViewModel, includeStaffFilter bool) string {
 	path := "/" + vm.Role.String() + "/clients"
+	if vm.EditClientID != "" {
+		return clientEditPanel(vm, path)
+	}
 	clients := filterClients(vm.Clients, vm.FilterStatus, vm.FilterPackage, vm.FilterPIC, vm.FilterSearch)
 
 	selectField := func(name, label string, options []string, selected string) string {
@@ -496,12 +499,30 @@ func clientsPanel(vm dashboard.ViewModel, includeStaffFilter bool) string {
 	var rows strings.Builder
 	for i, client := range clients {
 		resetConfirm := "Reset password " + client.Name + "? Password baru akan digenerate dan ditampilkan sekali."
-		rows.WriteString(`<tr><td>` + intText(i+1) + `</td><td><strong>` + esc(client.Name) + `</strong><span>` + esc(client.Email) + `</span></td><td>` + esc(client.PackageName) + `</td><td>` + esc(client.PICName) + `</td><td>` + esc(client.Status) + `</td><td><span class="progress-line"><i style="width:` + percentStyle(client.Progress) + `"></i></span>` + intText(client.Progress) + `%</td><td>` + esc(client.LastSchedule) + `</td><td><a class="icon-action" href="/` + attr(vm.Role.String()) + `/chat" hx-get="/` + attr(vm.Role.String()) + `/chat" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Chat</a> <a class="icon-action" href="/` + attr(vm.Role.String()) + `/clients/` + attr(client.ID) + `/agreement.pdf">Perjanjian</a> <form method="post" action="/` + attr(vm.Role.String()) + `/clients/` + attr(client.ID) + `/reset-password" class="inline-form" data-confirm="` + attr(resetConfirm) + `"><button type="submit" class="icon-action">Reset Password</button></form></td></tr>`)
+		editHref := path + "?edit=" + attr(client.ID)
+		activeBadge := `<span class="status green">Aktif</span>`
+		toggleAction := ""
+		deleteAction := ""
+		if !client.Active {
+			activeBadge = `<span class="status red">Nonaktif</span>`
+		}
+		if vm.Role == dashboard.RoleOwner {
+			toggleLabel := "Nonaktifkan"
+			toggleConfirm := "Nonaktifkan akses login " + client.Name + "? Data client tetap tersimpan, hanya login yang diblokir."
+			if !client.Active {
+				toggleLabel = "Aktifkan"
+				toggleConfirm = "Aktifkan kembali akses login " + client.Name + "?"
+			}
+			toggleAction = ` <form method="post" action="` + attr(path) + `/` + attr(client.ID) + `/toggle-active" class="inline-form" data-confirm="` + attr(toggleConfirm) + `"><button type="submit" class="icon-action">` + toggleLabel + `</button></form>`
+			deleteConfirm := "Hapus permanen client " + client.Name + "? Hanya bisa jika belum ada order, dokumen, task, expense, shipment, atau jadwal. Tindakan ini tidak bisa dibatalkan."
+			deleteAction = ` <form method="post" action="` + attr(path) + `/` + attr(client.ID) + `/delete" class="inline-form" data-confirm="` + attr(deleteConfirm) + `"><button type="submit" class="icon-action icon-action-danger">Hapus</button></form>`
+		}
+		rows.WriteString(`<tr><td>` + intText(i+1) + `</td><td><strong>` + esc(client.Name) + `</strong><span>` + esc(client.Email) + `</span></td><td>` + esc(client.PackageName) + `</td><td>` + esc(client.PICName) + `</td><td>` + activeBadge + ` ` + esc(client.Status) + `</td><td><span class="progress-line"><i style="width:` + percentStyle(client.Progress) + `"></i></span>` + intText(client.Progress) + `%</td><td>` + esc(client.LastSchedule) + `</td><td><a class="icon-action" href="` + attr(editHref) + `" hx-get="` + attr(editHref) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Edit</a> <a class="icon-action" href="/` + attr(vm.Role.String()) + `/chat" hx-get="/` + attr(vm.Role.String()) + `/chat" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Chat</a> <a class="icon-action" href="/` + attr(vm.Role.String()) + `/clients/` + attr(client.ID) + `/agreement.pdf">Perjanjian</a> <form method="post" action="/` + attr(vm.Role.String()) + `/clients/` + attr(client.ID) + `/reset-password" class="inline-form" data-confirm="` + attr(resetConfirm) + `"><button type="submit" class="icon-action">Reset Password</button></form>` + toggleAction + deleteAction + `</td></tr>`)
 	}
 	if rows.Len() == 0 {
 		rows.WriteString(`<tr><td colspan="8">Belum ada client yang cocok dengan filter ini.</td></tr>`)
 	}
-	addForm := ""
+	addModal := ""
 	if vm.ShowCreateForm {
 		var packageOptions strings.Builder
 		for _, pkg := range vm.ServicePackages {
@@ -513,18 +534,69 @@ func clientsPanel(vm dashboard.ViewModel, includeStaffFilter bool) string {
 		}
 		invoiceFields := ""
 		if vm.Role == dashboard.RoleOwner {
-			invoiceFields = `<label>Total Tagihan (IDR)<input name="invoice_total" type="number" min="0" placeholder="7500000"></label><label>Uang Masuk (IDR)<input name="amount_paid" type="number" min="0" placeholder="0"></label>`
+			invoiceFields = `<label>Total Tagihan (IDR)<input name="invoice_total" type="number" min="0" placeholder="7500000" data-order-total></label><label>Uang Masuk (IDR)<input name="amount_paid" type="number" min="0" placeholder="0" data-order-paid></label><label class="span-2">Kekurangan (IDR)<input type="text" readonly tabindex="-1" data-order-remaining value="0"></label>`
 		}
-		addForm = `<form method="post" action="` + attr(path) + `/create" class="student-upload-form"><label>Nama Lengkap<input name="name" required placeholder="Nama client"></label><label>Username<input name="username" required placeholder="Untuk login client"></label><label>Password<input name="password" type="password" minlength="8" required placeholder="Minimal 8 karakter"></label><label>Email<input name="email" type="email" placeholder="client@email.com"></label><label>No. WhatsApp<input name="phone" placeholder="08xxxxxxxxxx"></label><label>Paket<select name="package_name"><option value="">Belum dipilih</option>` + packageOptions.String() + `</select></label><label>Negara<input name="country" placeholder="Taiwan"></label><label>Kampus<input name="campus" placeholder="Nama kampus"></label><label>PIC Staff<select name="pic_staff_id"><option value="">Otomatis</option>` + staffOptions.String() + `</select></label>` + invoiceFields + `<button class="primary-button" type="submit">Simpan Client</button></form>`
+		addModal = `<div class="modal-overlay"><div class="modal-card modal-card-wide">
+  <div class="panel-head"><h3>Tambah Client</h3><a class="outline-button" href="` + attr(path) + `" hx-get="` + attr(path) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Batal</a></div>
+  <form method="post" action="` + attr(path) + `/create" class="student-upload-form modal-form-grid" autocomplete="off"><label>Nama Lengkap<input name="name" required placeholder="Nama client" autocomplete="off"></label><label>Username<input name="username" required placeholder="Untuk login client" autocomplete="off"></label><label>Password<input name="password" type="password" minlength="8" required placeholder="Minimal 8 karakter" autocomplete="new-password"></label><label>Email<input name="email" type="email" placeholder="client@email.com" autocomplete="off"></label><label>No. WhatsApp<input name="phone" placeholder="08xxxxxxxxxx"></label><label>Paket<select name="package_name"><option value="">Belum dipilih</option>` + packageOptions.String() + `</select></label><label>Negara<input name="country" placeholder="Taiwan"></label><label>Kampus<input name="campus" placeholder="Nama kampus"></label><label>PIC Staff<select name="pic_staff_id"><option value="">Otomatis</option>` + staffOptions.String() + `</select></label>` + invoiceFields + `<div class="span-2 package-edit-actions"><button class="primary-button" type="submit">Simpan Client</button></div></form>
+</div></div>`
 	}
 	return `
 <div class="panel table-panel">
   <div class="panel-head"><h2>Data Client</h2>` + toggleFormButton(vm.ShowCreateForm, "+ Tambah Client", path) + `</div>
-  ` + addForm + `
+  ` + addModal + `
   <form method="get" action="` + attr(path) + `" hx-get="` + attr(path) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true" class="toolbar-row mb-4"><label class="search-box wide">` + toolIconHTML("search") + `<input type="search" name="q" value="` + attr(vm.FilterSearch) + `" placeholder="Cari nama atau email" aria-label="Cari client"></label><div class="filter-group">` + filterFields + `<button class="outline-button" type="submit">Terapkan</button><a class="outline-button" href="` + attr(path) + `" hx-get="` + attr(path) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Reset</a><a class="primary-button" href="` + attr(path) + `/export">Export</a></div></form>
   <table class="data-table"><thead><tr><th>No.</th><th>Nama Klien</th><th>Paket / Layanan</th><th>PIC</th><th>Status Terakhir</th><th>Progress</th><th>Jadwal Terakhir</th><th>Aksi</th></tr></thead><tbody>
   ` + rows.String() + `</tbody></table>
   <div class="pagination"><span>Menampilkan ` + intText(len(clients)) + ` dari ` + intText(len(vm.Clients)) + ` data</span><div><button disabled>&lt;</button><button class="active">1</button><button disabled>&gt;</button></div></div>
+</div>`
+}
+
+// clientEditPanel lets owner/staff edit an existing client's profile fields
+// in place of the table, mirroring staffEditPanel/intakeEditPanel's
+// ?edit=<id> pattern. Credentials aren't editable here — that's still
+// ResetStudentPassword, kept as a separate, explicit action.
+func clientEditPanel(vm dashboard.ViewModel, basePath string) string {
+	var target dashboard.ClientProfile
+	found := false
+	for _, client := range vm.Clients {
+		if client.ID == vm.EditClientID {
+			target = client
+			found = true
+			break
+		}
+	}
+	if !found {
+		return `<div class="panel"><p class="empty-note">Client tidak ditemukan.</p><a class="outline-button mt-3" href="` + attr(basePath) + `" hx-get="` + attr(basePath) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Kembali</a></div>`
+	}
+	var packageOptions strings.Builder
+	for _, pkg := range vm.ServicePackages {
+		sel := ""
+		if pkg.Name == target.PackageName {
+			sel = " selected"
+		}
+		packageOptions.WriteString(`<option value="` + attr(pkg.Name) + `"` + sel + `>` + esc(pkg.Name) + `</option>`)
+	}
+	var staffOptions strings.Builder
+	for _, staff := range vm.Staff {
+		sel := ""
+		if staff.ID == target.PICStaffID {
+			sel = " selected"
+		}
+		staffOptions.WriteString(`<option value="` + attr(staff.ID) + `"` + sel + `>` + esc(staff.Name) + `</option>`)
+	}
+	return `<div class="panel">
+  <div class="panel-head"><div><h2 class="text-lg font-semibold">Edit Client — ` + esc(target.Name) + `</h2><p class="text-sm text-slate-500">Password login diubah lewat "Reset Password" di tabel, bukan di sini.</p></div><a class="outline-button" href="` + attr(basePath) + `" hx-get="` + attr(basePath) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Batal</a></div>
+  <form method="post" action="` + basePath + `/` + attr(target.ID) + `/update" class="student-upload-form modal-form-grid">
+    <label>Nama Lengkap<input name="name" value="` + attr(target.Name) + `" required></label>
+    <label>Email<input name="email" type="email" value="` + attr(target.Email) + `"></label>
+    <label>No. WhatsApp<input name="phone" value="` + attr(target.Phone) + `" placeholder="08xxxxxxxxxx"></label>
+    <label>Paket<select name="package_name"><option value="">Belum dipilih</option>` + packageOptions.String() + `</select></label>
+    <label>Negara<input name="country" value="` + attr(target.Country) + `"></label>
+    <label>Kampus<input name="campus" value="` + attr(target.Campus) + `"></label>
+    <label>PIC Staff<select name="pic_staff_id"><option value="">Tidak diubah</option>` + staffOptions.String() + `</select></label>
+    <div class="span-2 package-edit-actions"><button class="primary-button" type="submit">Simpan Perubahan</button></div>
+  </form>
 </div>`
 }
 
@@ -688,8 +760,19 @@ func packageManagerPanel(packages []dashboard.ServicePackage) string {
 }
 
 func ownerInvoices(vm dashboard.ViewModel) string {
+	const invoicesPath = "/owner/invoices"
+	if vm.EditClientID != "" {
+		return orderEditPanel(vm, invoicesPath)
+	}
+
+	addTrigger := toggleFormButton(vm.ShowCreateForm, "+ Tambah Order", invoicesPath)
+	addModal := ""
+	if vm.ShowCreateForm {
+		addModal = orderCreateModal(vm, invoicesPath)
+	}
+
 	if len(vm.Orders) == 0 {
-		return `<div class="panel empty-state"><span>Invoice</span><h2>Belum ada invoice</h2><p>Invoice akan muncul di sini setelah owner atau staff membuat order untuk client.</p></div>`
+		return `<div class="space-y-5">` + addModal + `<div class="panel empty-state"><div class="panel-head"><div><span>Invoice</span><h2>Belum ada invoice</h2><p>Invoice akan muncul di sini setelah owner atau staff membuat order untuk client.</p></div>` + addTrigger + `</div></div></div>`
 	}
 
 	filter := vm.InvoiceFilter
@@ -750,7 +833,9 @@ func ownerInvoices(vm dashboard.ViewModel) string {
 	waHref := waLink(client.Phone, "Halo "+active.ClientName+", ini invoice "+active.Code+" sebesar "+money(active.Total)+" dari Formora Taiwan.")
 	mailHref := mailtoLink(client.Email, "Invoice "+active.Code, "Halo "+active.ClientName+",\n\nBerikut invoice "+active.Code+" sebesar "+money(active.Total)+".\n\nTerima kasih.")
 	pdfHref := "/owner/invoices/" + url.QueryEscape(active.Code) + "/invoice.pdf"
-	commActions := `<div class="action-stack"><a class="success-button" href="` + attr(waHref) + `" target="_blank" rel="noopener">Kirim Invoice (WA)</a><a class="primary-button" href="` + attr(mailHref) + `">Kirim Invoice (Email)</a><a class="outline-button" href="` + attr(pdfHref) + `">Download PDF</a></div>`
+	editHref := invoicesPath + "?edit=" + url.QueryEscape(active.ID) + "&order=" + url.QueryEscape(active.Code)
+	deleteConfirm := "Hapus order " + active.Code + "? Tindakan ini tidak bisa dibatalkan."
+	commActions := `<div class="action-stack"><a class="success-button" href="` + attr(waHref) + `" target="_blank" rel="noopener">Kirim Invoice (WA)</a><a class="primary-button" href="` + attr(mailHref) + `">Kirim Invoice (Email)</a><a class="outline-button" href="` + attr(pdfHref) + `">Download PDF</a><a class="outline-button" href="` + attr(editHref) + `" hx-get="` + attr(editHref) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Edit Order</a><form method="post" action="` + invoicesPath + `/` + attr(active.ID) + `/delete" data-confirm="` + attr(deleteConfirm) + `"><button type="submit" class="danger-button" style="width:100%">Hapus Order</button></form></div>`
 
 	recordPaymentForm := `<form method="post" action="/owner/orders/record-payment" class="student-upload-form mt-3"><input type="hidden" name="order_code" value="` + attr(active.Code) + `"><label>Catat Pembayaran Masuk (IDR)<input name="amount" type="number" min="1" max="` + strconv.FormatInt(active.Total-active.Paid, 10) + `" required placeholder="Contoh: 2000000"></label><button class="outline-button" type="submit">Catat Pembayaran</button></form>`
 
@@ -764,16 +849,90 @@ func ownerInvoices(vm dashboard.ViewModel) string {
 		statusAction = `<div class="invoice-status-note"><strong>Belum ada pembayaran</strong><p>Catat cicilan yang sudah masuk, atau tandai lunas manual jika client sudah transfer penuh di luar sistem.</p><form method="post" action="/owner/orders/mark-paid"><input type="hidden" name="order_code" value="` + attr(active.Code) + `"><button class="outline-button" type="submit">Tandai Lunas Manual</button></form>` + recordPaymentForm + `</div>`
 	}
 
-	return `
+	return `<div class="space-y-5">` + addModal + `
 <div class="grid gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">
-  <aside class="panel"><h2 class="mb-1 text-base font-semibold">Semua Invoice</h2><p class="text-sm text-slate-500 mb-4">Klik salah satu invoice untuk lihat detail dan tindak lanjut.</p><div class="side-filter">` + side.String() + `</div><div class="invoice-list mt-4">` + invoiceList.String() + `</div></aside>
+  <aside class="panel"><div class="panel-head"><div><h2 class="text-base font-semibold">Semua Invoice</h2><p class="text-sm text-slate-500">Klik salah satu invoice untuk lihat detail dan tindak lanjut.</p></div>` + addTrigger + `</div><div class="side-filter">` + side.String() + `</div><div class="invoice-list mt-4">` + invoiceList.String() + `</div></aside>
   <section class="panel">
     <div class="invoice-head"><div><p>Invoice <strong>#` + esc(active.Code) + `</strong></p><span>` + esc(active.ClientName) + ` &middot; ` + esc(active.PackageName) + `</span></div><div><p>Jatuh Tempo</p><strong>` + esc(dateLabel(active.DueDate)) + `</strong></div></div>
     <div class="invoice-layout">
-      <div><dl class="detail-grid"><div><dt>Nama Klien</dt><dd>` + esc(active.ClientName) + `</dd></div><div><dt>Paket / Layanan</dt><dd>` + esc(active.PackageName) + `</dd></div><div><dt>Kode Pesanan</dt><dd>` + esc(active.Code) + `</dd></div><div><dt>Total Tagihan</dt><dd>` + money(active.Total) + `</dd></div><div><dt>Status Pembayaran</dt><dd><span class="status ` + statusClass + `">` + esc(orderStatusLabel(active.Status)) + `</span></dd></div></dl><div class="invoice-box"><h3>Rincian Tagihan</h3><div><span>` + esc(active.PackageName) + `</span><strong>` + money(active.Total) + `</strong></div><div><span>Sudah Dibayar</span><strong>` + money(active.Paid) + `</strong></div><div class="total"><span>Sisa</span><strong>` + money(active.Total-active.Paid) + `</strong></div></div><div class="invoice-box"><h3>Bukti Pembayaran</h3>` + proofDetail + `</div></div>
+      <div><dl class="detail-grid"><div><dt>Nama Klien</dt><dd>` + esc(active.ClientName) + `</dd></div><div><dt>Paket / Layanan</dt><dd>` + esc(active.PackageName) + `</dd></div><div><dt>Kode Pesanan</dt><dd>` + esc(active.Code) + `</dd></div><div><dt>Total Tagihan</dt><dd>` + money(active.Total) + `</dd></div><div><dt>Status Pembayaran</dt><dd><span class="status ` + statusClass + `">` + esc(orderStatusLabel(active.Status)) + `</span></dd></div></dl><div class="invoice-box"><h3>Rincian Tagihan</h3><div><span>` + esc(active.PackageName) + `</span><strong>` + money(active.Total) + `</strong></div><div><span>Sudah Dibayar (Uang Masuk)</span><strong>` + money(active.Paid) + `</strong></div><div class="total"><span>Kekurangan</span><strong>` + money(active.Total-active.Paid) + `</strong></div></div><div class="invoice-box"><h3>Bukti Pembayaran</h3>` + proofDetail + `</div></div>
       <div class="invoice-rail">` + statusAction + commActions + `</div>
     </div>
   </section>
+</div></div>`
+}
+
+// orderCreateModal is the "+ Tambah Order" form for opening a new invoice
+// against an existing client — the standalone counterpart to the
+// invoice_total/amount_paid fields on the client creation form, for a
+// renewal order or a client whose first order wasn't set up at signup.
+func orderCreateModal(vm dashboard.ViewModel, basePath string) string {
+	var clientOptions strings.Builder
+	for _, client := range vm.Clients {
+		clientOptions.WriteString(`<option value="` + attr(client.ID) + `">` + esc(client.Name) + `</option>`)
+	}
+	var packageOptions strings.Builder
+	for _, pkg := range vm.ServicePackages {
+		packageOptions.WriteString(`<option value="` + attr(pkg.Name) + `">` + esc(pkg.Name) + `</option>`)
+	}
+	return `<div class="modal-overlay"><div class="modal-card modal-card-wide">
+  <div class="panel-head"><h3>Tambah Order</h3><a class="outline-button" href="` + attr(basePath) + `" hx-get="` + attr(basePath) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Batal</a></div>
+  <form method="post" action="` + attr(basePath) + `/create" class="student-upload-form modal-form-grid">
+    <label class="span-2">Client<select name="client_id" required><option value="">Pilih client</option>` + clientOptions.String() + `</select></label>
+    <label class="span-2">Paket<select name="package_name"><option value="">Sama seperti profil client</option>` + packageOptions.String() + `</select></label>
+    <label>Total Tagihan (IDR)<input name="total" type="number" min="1" required placeholder="7500000" data-order-total></label>
+    <label>Uang Masuk (IDR)<input name="paid" type="number" min="0" placeholder="0" data-order-paid></label>
+    <label class="span-2">Kekurangan (IDR)<input type="text" readonly tabindex="-1" data-order-remaining value="0"></label>
+    <label>Jatuh Tempo<input name="due_date" type="date"></label>
+    <div class="span-2 package-edit-actions"><button class="primary-button" type="submit">Simpan Order</button></div>
+  </form>
+</div></div>`
+}
+
+// orderEditPanel edits an existing order's package/total/due date, reusing
+// the ?edit=<id> full-panel-swap pattern from clientEditPanel/
+// staffEditPanel. Paid amount stays out of this form — RecordOrderPayment/
+// MarkOrderPaidByCode own that value so status stays consistent.
+func orderEditPanel(vm dashboard.ViewModel, basePath string) string {
+	var target dashboard.Order
+	found := false
+	for _, order := range vm.Orders {
+		if order.ID == vm.EditClientID {
+			target = order
+			found = true
+			break
+		}
+	}
+	if !found {
+		return `<div class="panel"><p class="empty-note">Order tidak ditemukan.</p><a class="outline-button mt-3" href="` + attr(basePath) + `" hx-get="` + attr(basePath) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Kembali</a></div>`
+	}
+	var packageOptions strings.Builder
+	matchedPackage := false
+	for _, pkg := range vm.ServicePackages {
+		sel := ""
+		if pkg.Name == target.PackageName {
+			sel = " selected"
+			matchedPackage = true
+		}
+		packageOptions.WriteString(`<option value="` + attr(pkg.Name) + `"` + sel + `>` + esc(pkg.Name) + `</option>`)
+	}
+	if !matchedPackage && target.PackageName != "" {
+		packageOptions.WriteString(`<option value="` + attr(target.PackageName) + `" selected>` + esc(target.PackageName) + `</option>`)
+	}
+	dueValue := ""
+	if !target.DueDate.IsZero() {
+		dueValue = target.DueDate.Format("2006-01-02")
+	}
+	return `<div class="panel">
+  <div class="panel-head"><div><h2 class="text-lg font-semibold">Edit Order — ` + esc(target.Code) + `</h2><p class="text-sm text-slate-500">` + esc(target.ClientName) + ` &middot; Sudah dibayar ` + money(target.Paid) + ` (tidak diubah di sini).</p></div><a class="outline-button" href="` + attr(basePath) + `" hx-get="` + attr(basePath) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Batal</a></div>
+  <form method="post" action="` + basePath + `/` + attr(target.ID) + `/update" class="student-upload-form modal-form-grid">
+    <label class="span-2">Paket<select name="package_name">` + packageOptions.String() + `</select></label>
+    <label>Total Tagihan (IDR)<input name="total" type="number" min="1" required value="` + strconv.FormatInt(target.Total, 10) + `" data-order-total></label>
+    <label>Uang Masuk (IDR)<input type="text" readonly tabindex="-1" value="` + strconv.FormatInt(target.Paid, 10) + `" data-order-paid></label>
+    <label class="span-2">Kekurangan (IDR)<input type="text" readonly tabindex="-1" data-order-remaining value="0"></label>
+    <label>Jatuh Tempo<input name="due_date" type="date" value="` + dueValue + `"></label>
+    <div class="span-2 package-edit-actions"><button class="primary-button" type="submit">Simpan Perubahan</button></div>
+  </form>
 </div>`
 }
 

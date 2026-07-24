@@ -384,7 +384,7 @@ func (r *SQLRepository) CompanySnapshot(ctx context.Context, viewer User, viewRo
 }
 
 func (r *SQLRepository) ListClients(ctx context.Context, viewer User, viewRole Role) ([]ClientProfile, error) {
-	rows, err := r.query(ctx, `SELECT c.id, COALESCE(c.user_id, ''), c.name, c.email, c.phone, c.country, c.campus, c.package_name, c.pic_staff_id, COALESCE(s.name, ''), c.status, c.progress, c.last_schedule, c.current_stage, c.created_at FROM clients c LEFT JOIN users s ON s.id = c.pic_staff_id ORDER BY c.created_at DESC`)
+	rows, err := r.query(ctx, `SELECT c.id, COALESCE(c.user_id, ''), c.name, c.email, c.phone, c.country, c.campus, c.package_name, c.pic_staff_id, COALESCE(s.name, ''), c.status, c.progress, c.last_schedule, c.current_stage, c.created_at, COALESCE(u.active, TRUE) FROM clients c LEFT JOIN users s ON s.id = c.pic_staff_id LEFT JOIN users u ON u.id = c.user_id ORDER BY c.created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -393,7 +393,7 @@ func (r *SQLRepository) ListClients(ctx context.Context, viewer User, viewRole R
 	var clients []ClientProfile
 	for rows.Next() {
 		var client ClientProfile
-		if err := rows.Scan(&client.ID, &client.UserID, &client.Name, &client.Email, &client.Phone, &client.Country, &client.Campus, &client.PackageName, &client.PICStaffID, &client.PICName, &client.Status, &client.Progress, &client.LastSchedule, &client.CurrentStage, &client.CreatedAt); err != nil {
+		if err := rows.Scan(&client.ID, &client.UserID, &client.Name, &client.Email, &client.Phone, &client.Country, &client.Campus, &client.PackageName, &client.PICStaffID, &client.PICName, &client.Status, &client.Progress, &client.LastSchedule, &client.CurrentStage, &client.CreatedAt, &client.Active); err != nil {
 			return nil, err
 		}
 		clients = append(clients, client)
@@ -781,6 +781,127 @@ func (r *SQLRepository) SubmitPaymentProof(ctx context.Context, viewer User, cod
 		return Order{}, err
 	}
 	return r.findOrderByCode(ctx, order.Code)
+}
+
+// CreateOrder opens a new invoice for an already-existing client — the
+// standalone counterpart to the InvoiceTotal/AmountPaid fields baked into
+// CreateStudent, for a renewal order or a client whose first order wasn't
+// created at signup.
+func (r *SQLRepository) CreateOrder(ctx context.Context, viewer User, input CreateOrderInput) (Order, error) {
+	if viewer.Role != RoleOwner {
+		return Order{}, ErrForbidden
+	}
+	if input.Total <= 0 {
+		return Order{}, ErrInvalidInput
+	}
+	client, err := r.findClientByID(ctx, strings.TrimSpace(input.ClientID))
+	if err != nil {
+		return Order{}, err
+	}
+	paid := input.Paid
+	if paid < 0 {
+		paid = 0
+	}
+	if paid > input.Total {
+		paid = input.Total
+	}
+	packageName := strings.TrimSpace(input.PackageName)
+	if packageName == "" {
+		packageName = client.PackageName
+	}
+	now := time.Now()
+	dueDate := input.DueDate
+	if dueDate.IsZero() {
+		dueDate = now.AddDate(0, 0, 7)
+	}
+	status := OrderUnpaid
+	var paidAt *time.Time
+	if paid >= input.Total {
+		status = OrderPaid
+		paidAt = &now
+	}
+	order := Order{
+		ID:          newID("order"),
+		Code:        newOrderCode(now),
+		ClientID:    client.ID,
+		PackageName: packageName,
+		Total:       input.Total,
+		Paid:        paid,
+		Status:      status,
+		DueDate:     dueDate,
+		CreatedAt:   now,
+		PaidAt:      paidAt,
+	}
+	if _, err := r.exec(ctx, `INSERT INTO orders (id, code, client_id, package_name, total, paid, status, due_date, created_at, paid_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, order.ID, order.Code, order.ClientID, order.PackageName, order.Total, order.Paid, order.Status, order.DueDate, order.CreatedAt, order.PaidAt); err != nil {
+		return Order{}, err
+	}
+	description := fmt.Sprintf("Invoice %s dibuat: total Rp%d, uang masuk Rp%d", order.Code, order.Total, order.Paid)
+	r.logActivity(ctx, viewer.ID, client.ID, "invoice_created", description)
+	return r.findOrderByCode(ctx, order.Code)
+}
+
+// UpdateOrder edits an order's package/total/due date. The paid amount is
+// deliberately out of scope — RecordOrderPayment/MarkOrderPaidByCode own
+// that invariant — but changing the total can flip the derived status back
+// to unpaid if it now exceeds what's already been paid in.
+func (r *SQLRepository) UpdateOrder(ctx context.Context, viewer User, orderID string, input UpdateOrderInput) (Order, error) {
+	if viewer.Role != RoleOwner {
+		return Order{}, ErrForbidden
+	}
+	order, err := r.findOrderByID(ctx, orderID)
+	if err != nil {
+		return Order{}, err
+	}
+	if input.Total <= 0 || input.Total < order.Paid {
+		return Order{}, ErrInvalidInput
+	}
+	packageName := strings.TrimSpace(input.PackageName)
+	if packageName == "" {
+		packageName = order.PackageName
+	}
+	dueDate := input.DueDate
+	if dueDate.IsZero() {
+		dueDate = order.DueDate
+	}
+	status := order.Status
+	var paidAt *time.Time = order.PaidAt
+	if order.Paid >= input.Total {
+		status = OrderPaid
+		if paidAt == nil {
+			now := time.Now()
+			paidAt = &now
+		}
+	} else if order.Status == OrderPaid {
+		status = OrderUnpaid
+		paidAt = nil
+	}
+	if _, err := r.exec(ctx, `UPDATE orders SET package_name = ?, total = ?, due_date = ?, status = ?, paid_at = ? WHERE id = ?`, packageName, input.Total, dueDate, status, paidAt, order.ID); err != nil {
+		return Order{}, err
+	}
+	r.logActivity(ctx, viewer.ID, order.ClientID, "invoice_updated", "Invoice "+order.Code+" diperbarui")
+	return r.findOrderByID(ctx, order.ID)
+}
+
+// DeleteOrder removes an invoice outright — unlike clients/staff, orders
+// aren't referenced by other tables, so a hard delete is safe and matches
+// what "hapus order" should actually do.
+func (r *SQLRepository) DeleteOrder(ctx context.Context, viewer User, orderID string) error {
+	if viewer.Role != RoleOwner {
+		return ErrForbidden
+	}
+	order, err := r.findOrderByID(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	result, err := r.exec(ctx, `DELETE FROM orders WHERE id = ?`, order.ID)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	r.logActivity(ctx, viewer.ID, order.ClientID, "invoice_deleted", "Invoice "+order.Code+" dihapus")
+	return nil
 }
 
 func (r *SQLRepository) StudentHasPaymentAccess(ctx context.Context, viewer User) (bool, error) {
@@ -1345,6 +1466,128 @@ func (r *SQLRepository) ResetStudentPassword(ctx context.Context, viewer User, c
 	return user, newPassword, nil
 }
 
+// UpdateClient edits a client's profile fields (name/contact/package/PIC).
+// Login credentials go through ResetStudentPassword instead, mirroring how
+// UpdateStaff leaves the username/password out of scope.
+func (r *SQLRepository) UpdateClient(ctx context.Context, viewer User, clientID string, input UpdateClientInput) (ClientProfile, error) {
+	if viewer.Role != RoleOwner && viewer.Role != RoleStaff {
+		return ClientProfile{}, ErrForbidden
+	}
+	client, err := r.findClientByID(ctx, clientID)
+	if err != nil {
+		return ClientProfile{}, err
+	}
+	if viewer.Role == RoleStaff && client.PICStaffID != viewer.ID {
+		return ClientProfile{}, ErrForbidden
+	}
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return ClientProfile{}, ErrInvalidInput
+	}
+	picStaffID := strings.TrimSpace(input.PICStaffID)
+	if picStaffID == "" {
+		picStaffID = client.PICStaffID
+	} else if _, err := r.findStaffByID(ctx, picStaffID); err != nil {
+		return ClientProfile{}, ErrInvalidInput
+	}
+	packageName := strings.TrimSpace(input.PackageName)
+	if packageName == "" {
+		packageName = "Belum memilih paket"
+	}
+	country := strings.TrimSpace(input.Country)
+	if country == "" {
+		country = "Taiwan"
+	}
+	campus := strings.TrimSpace(input.Campus)
+	if campus == "" {
+		campus = "Belum dipilih"
+	}
+	email := strings.TrimSpace(input.Email)
+	phone := strings.TrimSpace(input.Phone)
+	if _, err := r.exec(ctx, `UPDATE clients SET name = ?, email = ?, phone = ?, country = ?, campus = ?, package_name = ?, pic_staff_id = ? WHERE id = ?`, name, email, phone, country, campus, packageName, picStaffID, client.ID); err != nil {
+		return ClientProfile{}, err
+	}
+	if client.UserID != "" {
+		if _, err := r.exec(ctx, `UPDATE users SET name = ?, email = ?, phone = ? WHERE id = ?`, name, email, phone, client.UserID); err != nil {
+			return ClientProfile{}, err
+		}
+	}
+	return r.findClientByID(ctx, client.ID)
+}
+
+// ToggleClientActive flips a client's login access on/off without touching
+// their client/order/document history — the same soft-delete pattern as
+// ToggleStaffActive, since orders and documents reference the clients row
+// and a hard delete would orphan that data. Owner-only: unlike edit/reset-
+// password, blocking a client's access is a business decision, not routine
+// account admin a PIC staff should be able to do unilaterally.
+func (r *SQLRepository) ToggleClientActive(ctx context.Context, viewer User, clientID string) error {
+	if viewer.Role != RoleOwner {
+		return ErrForbidden
+	}
+	client, err := r.findClientByID(ctx, clientID)
+	if err != nil {
+		return err
+	}
+	if client.UserID == "" {
+		return ErrNotFound
+	}
+	_, err = r.exec(ctx, `UPDATE users SET active = ? WHERE id = ?`, !client.Active, client.UserID)
+	return err
+}
+
+// DeleteClient permanently removes a client. It's blocked (ErrConflict) if
+// the client still has real business records — orders, documents, tasks,
+// expenses, shipments, or schedules — since wiping those would destroy
+// financial/operational history with no undo; ToggleClientActive is the
+// tool for that case. What's safe to cascade away is the incidental data
+// every client accumulates just by existing (chat, signed agreement,
+// intake form, onboarding progress checklist, activity log) — none of
+// that has value once the client itself is gone.
+func (r *SQLRepository) DeleteClient(ctx context.Context, viewer User, clientID string) error {
+	if viewer.Role != RoleOwner {
+		return ErrForbidden
+	}
+	client, err := r.findClientByID(ctx, clientID)
+	if err != nil {
+		return err
+	}
+	blockingTables := []string{"orders", "documents", "tasks", "expenses", "shipments", "schedules"}
+	for _, table := range blockingTables {
+		var count int
+		if err := r.queryRow(ctx, `SELECT COUNT(*) FROM `+table+` WHERE client_id = ?`, client.ID).Scan(&count); err != nil {
+			return err
+		}
+		if count > 0 {
+			return ErrConflict
+		}
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := r.txExec(ctx, tx, `DELETE FROM chat_messages WHERE conversation_id IN (SELECT id FROM chat_conversations WHERE client_id = ?)`, client.ID); err != nil {
+		return err
+	}
+	cascadeTables := []string{"chat_conversations", "client_agreements", "client_intake_forms", "progress_stages", "activity_log"}
+	for _, table := range cascadeTables {
+		if _, err := r.txExec(ctx, tx, `DELETE FROM `+table+` WHERE client_id = ?`, client.ID); err != nil {
+			return fmt.Errorf("clear %s: %w", table, err)
+		}
+	}
+	if _, err := r.txExec(ctx, tx, `DELETE FROM clients WHERE id = ?`, client.ID); err != nil {
+		return err
+	}
+	if client.UserID != "" {
+		if _, err := r.txExec(ctx, tx, `DELETE FROM users WHERE id = ?`, client.UserID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // ListAllStaff returns every staff account regardless of active status, so
 // the owner-facing management page can also see (and re-activate) disabled
 // accounts — unlike ListStaff, which only surfaces active staff for PIC
@@ -1767,9 +2010,13 @@ func (r *SQLRepository) findOrderByCode(ctx context.Context, code string) (Order
 	return scanOrder(r.queryRow(ctx, `SELECT o.id, o.code, o.client_id, COALESCE(c.name, ''), o.package_name, o.total, o.paid, o.status, o.due_date, o.proof_note, o.proof_file_name, o.proof_storage_path, o.created_at, o.paid_at FROM orders o LEFT JOIN clients c ON c.id = o.client_id WHERE UPPER(o.code) = ?`, strings.ToUpper(strings.TrimSpace(code))))
 }
 
+func (r *SQLRepository) findOrderByID(ctx context.Context, id string) (Order, error) {
+	return scanOrder(r.queryRow(ctx, `SELECT o.id, o.code, o.client_id, COALESCE(c.name, ''), o.package_name, o.total, o.paid, o.status, o.due_date, o.proof_note, o.proof_file_name, o.proof_storage_path, o.created_at, o.paid_at FROM orders o LEFT JOIN clients c ON c.id = o.client_id WHERE o.id = ?`, id))
+}
+
 func (r *SQLRepository) findClientByID(ctx context.Context, id string) (ClientProfile, error) {
 	var client ClientProfile
-	if err := r.queryRow(ctx, `SELECT c.id, COALESCE(c.user_id, ''), c.name, c.email, c.phone, c.country, c.campus, c.package_name, c.pic_staff_id, COALESCE(s.name, ''), c.status, c.progress, c.last_schedule, c.current_stage, c.created_at FROM clients c LEFT JOIN users s ON s.id = c.pic_staff_id WHERE c.id = ?`, id).Scan(&client.ID, &client.UserID, &client.Name, &client.Email, &client.Phone, &client.Country, &client.Campus, &client.PackageName, &client.PICStaffID, &client.PICName, &client.Status, &client.Progress, &client.LastSchedule, &client.CurrentStage, &client.CreatedAt); err != nil {
+	if err := r.queryRow(ctx, `SELECT c.id, COALESCE(c.user_id, ''), c.name, c.email, c.phone, c.country, c.campus, c.package_name, c.pic_staff_id, COALESCE(s.name, ''), c.status, c.progress, c.last_schedule, c.current_stage, c.created_at, COALESCE(u.active, TRUE) FROM clients c LEFT JOIN users s ON s.id = c.pic_staff_id LEFT JOIN users u ON u.id = c.user_id WHERE c.id = ?`, id).Scan(&client.ID, &client.UserID, &client.Name, &client.Email, &client.Phone, &client.Country, &client.Campus, &client.PackageName, &client.PICStaffID, &client.PICName, &client.Status, &client.Progress, &client.LastSchedule, &client.CurrentStage, &client.CreatedAt, &client.Active); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ClientProfile{}, ErrNotFound
 		}
