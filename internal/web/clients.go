@@ -69,6 +69,7 @@ func (h Handler) updateClient(w http.ResponseWriter, r *http.Request) {
 	}
 	if viewer.Role == dashboard.RoleOwner {
 		input.InvoiceTotal, _ = strconv.ParseInt(strings.TrimSpace(r.FormValue("invoice_total")), 10, 64)
+		input.AmountPaid, _ = strconv.ParseInt(strings.TrimSpace(r.FormValue("amount_paid")), 10, 64)
 	}
 	_, err := h.store.UpdateClient(r.Context(), viewer, clientID, input)
 	notice := "Data client berhasil diperbarui."
@@ -76,8 +77,6 @@ func (h Handler) updateClient(w http.ResponseWriter, r *http.Request) {
 		notice = "Gagal memperbarui data client. Nama wajib diisi."
 		if errors.Is(err, dashboard.ErrForbidden) {
 			notice = "Kamu tidak punya akses untuk mengubah client ini."
-		} else if input.InvoiceTotal > 0 && strings.TrimSpace(input.Name) != "" && errors.Is(err, dashboard.ErrInvalidInput) {
-			notice = "Gagal memperbarui data client. Total tagihan tidak boleh kurang dari uang yang sudah masuk."
 		}
 	}
 	http.Redirect(w, r, basePath+"?notice="+url.QueryEscape(notice), http.StatusSeeOther)

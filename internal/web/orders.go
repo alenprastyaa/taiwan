@@ -72,10 +72,11 @@ func (h Handler) updateOrder(w http.ResponseWriter, r *http.Request) {
 	order, err := h.store.UpdateOrder(r.Context(), viewer, orderID, dashboard.UpdateOrderInput{
 		PackageName: r.FormValue("package_name"),
 		Total:       parseOrderAmount(r.FormValue("total")),
+		Paid:        parseOrderAmount(r.FormValue("paid")),
 		DueDate:     parseOrderDueDate(r.FormValue("due_date")),
 	})
 	if err != nil {
-		http.Redirect(w, r, invoicesPath+"?notice="+url.QueryEscape("Gagal memperbarui order. Total tidak boleh kurang dari uang yang sudah masuk."), http.StatusSeeOther)
+		http.Redirect(w, r, invoicesPath+"?notice="+url.QueryEscape("Gagal memperbarui order. Isi total tagihan."), http.StatusSeeOther)
 		return
 	}
 	http.Redirect(w, r, invoicesPath+"?order="+url.QueryEscape(order.Code)+"&notice="+url.QueryEscape("Order "+order.Code+" berhasil diperbarui."), http.StatusSeeOther)

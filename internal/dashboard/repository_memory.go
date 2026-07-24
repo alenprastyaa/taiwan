@@ -290,9 +290,8 @@ func (r *MemoryRepository) CompanySnapshot(ctx context.Context, viewer User, vie
 		if !visibleClients[order.ClientID] {
 			continue
 		}
-		if order.Status == OrderPaid {
-			snapshot.Revenue += order.Paid
-		} else {
+		snapshot.Revenue += order.Paid
+		if order.Status != OrderPaid {
 			snapshot.OpenOrders++
 			snapshot.UnpaidInvoices++
 		}

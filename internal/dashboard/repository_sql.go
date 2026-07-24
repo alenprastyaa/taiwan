@@ -369,9 +369,13 @@ func (r *SQLRepository) CompanySnapshot(ctx context.Context, viewer User, viewRo
 		}
 	}
 	for _, order := range orders {
-		if order.Status == OrderPaid {
-			snapshot.Revenue += order.Paid
-		} else {
+		// Revenue is cash actually received, so it counts every order's
+		// Paid — including partial installments on an order that isn't
+		// fully settled yet — not just orders that reached OrderPaid.
+		// Otherwise a partial payment shows up on the invoice as "Uang
+		// Masuk" but never reaches the dashboard's Pemasukan total.
+		snapshot.Revenue += order.Paid
+		if order.Status != OrderPaid {
 			snapshot.OpenOrders++
 			snapshot.UnpaidInvoices++
 		}
@@ -852,8 +856,15 @@ func (r *SQLRepository) UpdateOrder(ctx context.Context, viewer User, orderID st
 	if err != nil {
 		return Order{}, err
 	}
-	if input.Total <= 0 || input.Total < order.Paid {
+	if input.Total <= 0 {
 		return Order{}, ErrInvalidInput
+	}
+	paid := input.Paid
+	if paid < 0 {
+		paid = 0
+	}
+	if paid > input.Total {
+		paid = input.Total
 	}
 	packageName := strings.TrimSpace(input.PackageName)
 	if packageName == "" {
@@ -863,22 +874,21 @@ func (r *SQLRepository) UpdateOrder(ctx context.Context, viewer User, orderID st
 	if dueDate.IsZero() {
 		dueDate = order.DueDate
 	}
-	status := order.Status
-	var paidAt *time.Time = order.PaidAt
-	if order.Paid >= input.Total {
+	status := OrderUnpaid
+	paidAt := order.PaidAt
+	if paid >= input.Total {
 		status = OrderPaid
 		if paidAt == nil {
 			now := time.Now()
 			paidAt = &now
 		}
-	} else if order.Status == OrderPaid {
-		status = OrderUnpaid
+	} else {
 		paidAt = nil
 	}
-	if _, err := r.exec(ctx, `UPDATE orders SET package_name = ?, total = ?, due_date = ?, status = ?, paid_at = ? WHERE id = ?`, packageName, input.Total, dueDate, status, paidAt, order.ID); err != nil {
+	if _, err := r.exec(ctx, `UPDATE orders SET package_name = ?, total = ?, paid = ?, due_date = ?, status = ?, paid_at = ? WHERE id = ?`, packageName, input.Total, paid, dueDate, status, paidAt, order.ID); err != nil {
 		return Order{}, err
 	}
-	r.logActivity(ctx, viewer.ID, order.ClientID, "invoice_updated", "Invoice "+order.Code+" diperbarui")
+	r.logActivity(ctx, viewer.ID, order.ClientID, "invoice_updated", fmt.Sprintf("Invoice %s diperbarui: total Rp%d, uang masuk Rp%d", order.Code, input.Total, paid))
 	return r.findOrderByID(ctx, order.ID)
 }
 
@@ -1513,28 +1523,28 @@ func (r *SQLRepository) UpdateClient(ctx context.Context, viewer User, clientID 
 		}
 	}
 	if viewer.Role == RoleOwner && input.InvoiceTotal > 0 {
-		if err := r.upsertClientInvoiceTotal(ctx, viewer, client, packageName, input.InvoiceTotal); err != nil {
+		if err := r.upsertClientInvoiceTotal(ctx, viewer, client, packageName, input.InvoiceTotal, input.AmountPaid); err != nil {
 			return ClientProfile{}, err
 		}
 	}
 	return r.findClientByID(ctx, client.ID)
 }
 
-// upsertClientInvoiceTotal backs the Total Tagihan field on the client edit
-// form. It only ever touches total — paid/status stay owned by
-// RecordOrderPayment/MarkOrderPaidByCode, same invariant UpdateOrder
-// enforces. If the client has no order yet, one is opened at this total
-// (paid 0), matching what CreateStudent does at signup time.
-func (r *SQLRepository) upsertClientInvoiceTotal(ctx context.Context, viewer User, client ClientProfile, packageName string, total int64) error {
+// upsertClientInvoiceTotal backs the Total Tagihan/Uang Masuk fields on the
+// client edit form, sharing CreateOrder/UpdateOrder's clamp-and-recompute
+// logic so paid/status stay consistent whichever form touched them. If the
+// client has no order yet, one is opened at this total/paid, matching what
+// CreateStudent does at signup time.
+func (r *SQLRepository) upsertClientInvoiceTotal(ctx context.Context, viewer User, client ClientProfile, packageName string, total, paid int64) error {
 	order, err := r.findLatestOrderByClientID(ctx, client.ID)
 	if errors.Is(err, ErrNotFound) {
-		_, err := r.CreateOrder(ctx, viewer, CreateOrderInput{ClientID: client.ID, PackageName: packageName, Total: total})
+		_, err := r.CreateOrder(ctx, viewer, CreateOrderInput{ClientID: client.ID, PackageName: packageName, Total: total, Paid: paid})
 		return err
 	}
 	if err != nil {
 		return err
 	}
-	_, err = r.UpdateOrder(ctx, viewer, order.ID, UpdateOrderInput{PackageName: order.PackageName, Total: total, DueDate: order.DueDate})
+	_, err = r.UpdateOrder(ctx, viewer, order.ID, UpdateOrderInput{PackageName: order.PackageName, Total: total, Paid: paid, DueDate: order.DueDate})
 	return err
 }
 

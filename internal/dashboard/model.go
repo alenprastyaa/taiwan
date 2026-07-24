@@ -241,12 +241,14 @@ type UpdateClientInput struct {
 	Country     string
 	Campus      string
 	PICStaffID  string
-	// InvoiceTotal is owner-only, mirroring CreateStudentInput's field of the
-	// same name: 0 means "leave the client's order alone." A positive value
-	// updates the client's latest order's total (or opens a new order if
-	// they don't have one yet) — the same total-only edit UpdateOrderInput
-	// allows, just reachable from the client form too.
+	// InvoiceTotal/AmountPaid are owner-only, mirroring CreateStudentInput's
+	// fields of the same names: InvoiceTotal == 0 means "leave the client's
+	// order alone" (AmountPaid is ignored in that case too). A positive
+	// InvoiceTotal updates the client's latest order's total/paid — or
+	// opens a new order if they don't have one yet — the same edit
+	// UpdateOrderInput allows, just reachable from the client form too.
 	InvoiceTotal int64
+	AmountPaid   int64
 }
 
 type OrderStatus string
@@ -286,12 +288,16 @@ type CreateOrderInput struct {
 	DueDate     time.Time
 }
 
-// UpdateOrderInput edits an order's package/total/due date. Paid amount is
-// deliberately excluded — that goes through RecordOrderPayment/
-// MarkOrderPaidByCode so the paid/status invariant stays in one place.
+// UpdateOrderInput edits an order's package/total/paid/due date. Paid is
+// clamped to [0, Total] the same way CreateOrderInput's is — direct owner
+// edits here are a separate path from RecordOrderPayment/
+// MarkOrderPaidByCode (which stay for the "record an installment as it
+// comes in" flow); status/paid_at are recomputed from paid vs total either
+// way, so both paths keep the invariant consistent.
 type UpdateOrderInput struct {
 	PackageName string
 	Total       int64
+	Paid        int64
 	DueDate     time.Time
 }
 

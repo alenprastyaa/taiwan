@@ -592,7 +592,7 @@ func clientEditPanel(vm dashboard.ViewModel, basePath string) string {
 		if hasOrder {
 			totalValue = strconv.FormatInt(order.Total, 10)
 		}
-		invoiceFields = `<label>Total Tagihan (IDR)<input name="invoice_total" type="number" min="0" placeholder="7500000" value="` + attr(totalValue) + `" data-order-total></label><label>Uang Masuk (IDR)<input type="text" readonly tabindex="-1" value="` + strconv.FormatInt(order.Paid, 10) + `" data-order-paid></label><label class="span-2">Kekurangan (IDR)<input type="text" readonly tabindex="-1" data-order-remaining value="0"></label>`
+		invoiceFields = `<label>Total Tagihan (IDR)<input name="invoice_total" type="number" min="0" placeholder="7500000" value="` + attr(totalValue) + `" data-order-total></label><label>Uang Masuk (IDR)<input name="amount_paid" type="number" min="0" value="` + strconv.FormatInt(order.Paid, 10) + `" data-order-paid></label><label class="span-2">Kekurangan (IDR)<input type="text" readonly tabindex="-1" data-order-remaining value="0"></label>`
 	}
 	return `<div class="panel">
   <div class="panel-head"><div><h2 class="text-lg font-semibold">Edit Client — ` + esc(target.Name) + `</h2><p class="text-sm text-slate-500">Password login diubah lewat "Reset Password" di tabel, bukan di sini.</p></div><a class="outline-button" href="` + attr(basePath) + `" hx-get="` + attr(basePath) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Batal</a></div>
@@ -933,11 +933,11 @@ func orderEditPanel(vm dashboard.ViewModel, basePath string) string {
 		dueValue = target.DueDate.Format("2006-01-02")
 	}
 	return `<div class="panel">
-  <div class="panel-head"><div><h2 class="text-lg font-semibold">Edit Order — ` + esc(target.Code) + `</h2><p class="text-sm text-slate-500">` + esc(target.ClientName) + ` &middot; Sudah dibayar ` + money(target.Paid) + ` (tidak diubah di sini).</p></div><a class="outline-button" href="` + attr(basePath) + `" hx-get="` + attr(basePath) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Batal</a></div>
+  <div class="panel-head"><div><h2 class="text-lg font-semibold">Edit Order — ` + esc(target.Code) + `</h2><p class="text-sm text-slate-500">` + esc(target.ClientName) + `</p></div><a class="outline-button" href="` + attr(basePath) + `" hx-get="` + attr(basePath) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Batal</a></div>
   <form method="post" action="` + basePath + `/` + attr(target.ID) + `/update" class="student-upload-form modal-form-grid">
     <label class="span-2">Paket<select name="package_name">` + packageOptions.String() + `</select></label>
     <label>Total Tagihan (IDR)<input name="total" type="number" min="1" required value="` + strconv.FormatInt(target.Total, 10) + `" data-order-total></label>
-    <label>Uang Masuk (IDR)<input type="text" readonly tabindex="-1" value="` + strconv.FormatInt(target.Paid, 10) + `" data-order-paid></label>
+    <label>Uang Masuk (IDR)<input name="paid" type="number" min="0" value="` + strconv.FormatInt(target.Paid, 10) + `" data-order-paid></label>
     <label class="span-2">Kekurangan (IDR)<input type="text" readonly tabindex="-1" data-order-remaining value="0"></label>
     <label>Jatuh Tempo<input name="due_date" type="date" value="` + dueValue + `"></label>
     <div class="span-2 package-edit-actions"><button class="primary-button" type="submit">Simpan Perubahan</button></div>
