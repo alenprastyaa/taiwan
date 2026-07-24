@@ -58,7 +58,7 @@ func (h Handler) updateClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	clientID := chi.URLParam(r, "clientID")
-	_, err := h.store.UpdateClient(r.Context(), viewer, clientID, dashboard.UpdateClientInput{
+	input := dashboard.UpdateClientInput{
 		Name:        r.FormValue("name"),
 		Email:       r.FormValue("email"),
 		Phone:       r.FormValue("phone"),
@@ -66,12 +66,18 @@ func (h Handler) updateClient(w http.ResponseWriter, r *http.Request) {
 		Country:     r.FormValue("country"),
 		Campus:      r.FormValue("campus"),
 		PICStaffID:  r.FormValue("pic_staff_id"),
-	})
+	}
+	if viewer.Role == dashboard.RoleOwner {
+		input.InvoiceTotal, _ = strconv.ParseInt(strings.TrimSpace(r.FormValue("invoice_total")), 10, 64)
+	}
+	_, err := h.store.UpdateClient(r.Context(), viewer, clientID, input)
 	notice := "Data client berhasil diperbarui."
 	if err != nil {
 		notice = "Gagal memperbarui data client. Nama wajib diisi."
 		if errors.Is(err, dashboard.ErrForbidden) {
 			notice = "Kamu tidak punya akses untuk mengubah client ini."
+		} else if input.InvoiceTotal > 0 && strings.TrimSpace(input.Name) != "" && errors.Is(err, dashboard.ErrInvalidInput) {
+			notice = "Gagal memperbarui data client. Total tagihan tidak boleh kurang dari uang yang sudah masuk."
 		}
 	}
 	http.Redirect(w, r, basePath+"?notice="+url.QueryEscape(notice), http.StatusSeeOther)

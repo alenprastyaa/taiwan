@@ -241,6 +241,12 @@ type UpdateClientInput struct {
 	Country     string
 	Campus      string
 	PICStaffID  string
+	// InvoiceTotal is owner-only, mirroring CreateStudentInput's field of the
+	// same name: 0 means "leave the client's order alone." A positive value
+	// updates the client's latest order's total (or opens a new order if
+	// they don't have one yet) — the same total-only edit UpdateOrderInput
+	// allows, just reachable from the client form too.
+	InvoiceTotal int64
 }
 
 type OrderStatus string

@@ -585,6 +585,15 @@ func clientEditPanel(vm dashboard.ViewModel, basePath string) string {
 		}
 		staffOptions.WriteString(`<option value="` + attr(staff.ID) + `"` + sel + `>` + esc(staff.Name) + `</option>`)
 	}
+	invoiceFields := ""
+	if vm.Role == dashboard.RoleOwner {
+		order, hasOrder := latestOrderForClient(vm.Orders, target.ID)
+		totalValue := ""
+		if hasOrder {
+			totalValue = strconv.FormatInt(order.Total, 10)
+		}
+		invoiceFields = `<label>Total Tagihan (IDR)<input name="invoice_total" type="number" min="0" placeholder="7500000" value="` + attr(totalValue) + `" data-order-total></label><label>Uang Masuk (IDR)<input type="text" readonly tabindex="-1" value="` + strconv.FormatInt(order.Paid, 10) + `" data-order-paid></label><label class="span-2">Kekurangan (IDR)<input type="text" readonly tabindex="-1" data-order-remaining value="0"></label>`
+	}
 	return `<div class="panel">
   <div class="panel-head"><div><h2 class="text-lg font-semibold">Edit Client — ` + esc(target.Name) + `</h2><p class="text-sm text-slate-500">Password login diubah lewat "Reset Password" di tabel, bukan di sini.</p></div><a class="outline-button" href="` + attr(basePath) + `" hx-get="` + attr(basePath) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Batal</a></div>
   <form method="post" action="` + basePath + `/` + attr(target.ID) + `/update" class="student-upload-form modal-form-grid">
@@ -594,7 +603,7 @@ func clientEditPanel(vm dashboard.ViewModel, basePath string) string {
     <label>Paket<select name="package_name"><option value="">Belum dipilih</option>` + packageOptions.String() + `</select></label>
     <label>Negara<input name="country" value="` + attr(target.Country) + `"></label>
     <label>Kampus<input name="campus" value="` + attr(target.Campus) + `"></label>
-    <label>PIC Staff<select name="pic_staff_id"><option value="">Tidak diubah</option>` + staffOptions.String() + `</select></label>
+    <label>PIC Staff<select name="pic_staff_id"><option value="">Tidak diubah</option>` + staffOptions.String() + `</select></label>` + invoiceFields + `
     <div class="span-2 package-edit-actions"><button class="primary-button" type="submit">Simpan Perubahan</button></div>
   </form>
 </div>`
@@ -1670,6 +1679,19 @@ func firstOrder(orders []dashboard.Order) dashboard.Order {
 		return orders[0]
 	}
 	return dashboard.Order{Code: "-", ClientName: "-", PackageName: "-", Status: dashboard.OrderUnpaid}
+}
+
+// latestOrderForClient finds a client's most recent order — vm.Orders is
+// already sorted newest-first by the repository, so the first match wins.
+// Used to prefill the Total Tagihan/Uang Masuk fields on the client edit
+// form; found is false for a client who doesn't have an order yet.
+func latestOrderForClient(orders []dashboard.Order, clientID string) (order dashboard.Order, found bool) {
+	for _, o := range orders {
+		if o.ClientID == clientID {
+			return o, true
+		}
+	}
+	return dashboard.Order{}, false
 }
 
 func orderTotals(orders []dashboard.Order) (int64, int64) {

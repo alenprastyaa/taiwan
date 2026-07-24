@@ -1512,7 +1512,30 @@ func (r *SQLRepository) UpdateClient(ctx context.Context, viewer User, clientID 
 			return ClientProfile{}, err
 		}
 	}
+	if viewer.Role == RoleOwner && input.InvoiceTotal > 0 {
+		if err := r.upsertClientInvoiceTotal(ctx, viewer, client, packageName, input.InvoiceTotal); err != nil {
+			return ClientProfile{}, err
+		}
+	}
 	return r.findClientByID(ctx, client.ID)
+}
+
+// upsertClientInvoiceTotal backs the Total Tagihan field on the client edit
+// form. It only ever touches total — paid/status stay owned by
+// RecordOrderPayment/MarkOrderPaidByCode, same invariant UpdateOrder
+// enforces. If the client has no order yet, one is opened at this total
+// (paid 0), matching what CreateStudent does at signup time.
+func (r *SQLRepository) upsertClientInvoiceTotal(ctx context.Context, viewer User, client ClientProfile, packageName string, total int64) error {
+	order, err := r.findLatestOrderByClientID(ctx, client.ID)
+	if errors.Is(err, ErrNotFound) {
+		_, err := r.CreateOrder(ctx, viewer, CreateOrderInput{ClientID: client.ID, PackageName: packageName, Total: total})
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	_, err = r.UpdateOrder(ctx, viewer, order.ID, UpdateOrderInput{PackageName: order.PackageName, Total: total, DueDate: order.DueDate})
+	return err
 }
 
 // ToggleClientActive flips a client's login access on/off without touching
@@ -2012,6 +2035,13 @@ func (r *SQLRepository) findOrderByCode(ctx context.Context, code string) (Order
 
 func (r *SQLRepository) findOrderByID(ctx context.Context, id string) (Order, error) {
 	return scanOrder(r.queryRow(ctx, `SELECT o.id, o.code, o.client_id, COALESCE(c.name, ''), o.package_name, o.total, o.paid, o.status, o.due_date, o.proof_note, o.proof_file_name, o.proof_storage_path, o.created_at, o.paid_at FROM orders o LEFT JOIN clients c ON c.id = o.client_id WHERE o.id = ?`, id))
+}
+
+// findLatestOrderByClientID backs the Total Tagihan field on the client edit
+// form: a client can have several orders (renewals), so "the client's
+// invoice" means the most recently opened one.
+func (r *SQLRepository) findLatestOrderByClientID(ctx context.Context, clientID string) (Order, error) {
+	return scanOrder(r.queryRow(ctx, `SELECT o.id, o.code, o.client_id, COALESCE(c.name, ''), o.package_name, o.total, o.paid, o.status, o.due_date, o.proof_note, o.proof_file_name, o.proof_storage_path, o.created_at, o.paid_at FROM orders o LEFT JOIN clients c ON c.id = o.client_id WHERE o.client_id = ? ORDER BY o.created_at DESC LIMIT 1`, clientID))
 }
 
 func (r *SQLRepository) findClientByID(ctx context.Context, id string) (ClientProfile, error) {
