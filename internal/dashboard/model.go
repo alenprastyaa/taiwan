@@ -84,8 +84,9 @@ type ViewModel struct {
 	Snapshot             CompanySnapshot
 	Clients              []ClientProfile
 	Orders               []Order
+	OrderPayments        []OrderPayment
 	Documents            []Document
-	ProgressStages       []ProgressStage
+	ClientStageHistory   []ClientStageEvent
 	PipelineStages       []PipelineStage
 	ServicePackages      []ServicePackage
 	Schedules            []ScheduleItem
@@ -276,6 +277,34 @@ type Order struct {
 	PaidAt           *time.Time
 }
 
+type PaymentStatus string
+
+const (
+	PaymentPending  PaymentStatus = "pending"
+	PaymentVerified PaymentStatus = "verified"
+	PaymentRejected PaymentStatus = "rejected"
+)
+
+// OrderPayment is one entry ("cicilan") in an order's payment ledger.
+// orders.paid is a cached value always recomputed as the sum of every
+// verified OrderPayment for that order — see recomputeOrderPaidState in
+// repository_sql_payments.go — so there's exactly one source of truth for
+// how much has actually come in, whether it arrived via a client's proof
+// upload, an owner-recorded payment, or a manual adjustment.
+type OrderPayment struct {
+	ID               string
+	OrderID          string
+	Amount           int64
+	Note             string
+	ProofFileName    string
+	ProofStoragePath string
+	Status           PaymentStatus
+	SubmittedBy      string
+	SubmittedAt      time.Time
+	VerifiedAt       *time.Time
+	RejectReason     string
+}
+
 // CreateOrderInput opens a new invoice for an existing client — the
 // standalone counterpart to the InvoiceTotal/AmountPaid fields on
 // CreateStudentInput, for clients who already have an account and need a
@@ -289,11 +318,10 @@ type CreateOrderInput struct {
 }
 
 // UpdateOrderInput edits an order's package/total/paid/due date. Paid is
-// clamped to [0, Total] the same way CreateOrderInput's is — direct owner
-// edits here are a separate path from RecordOrderPayment/
-// MarkOrderPaidByCode (which stay for the "record an installment as it
-// comes in" flow); status/paid_at are recomputed from paid vs total either
-// way, so both paths keep the invariant consistent.
+// clamped to [0, Total]; a change from the order's current paid amount is
+// recorded as a signed adjustment entry in the order_payments ledger (see
+// recomputeOrderPaidState), so a direct edit here shows up in "Riwayat
+// Cicilan" just like RecordOrderPayment/MarkOrderPaidByCode do.
 type UpdateOrderInput struct {
 	PackageName string
 	Total       int64
@@ -323,27 +351,6 @@ type Document struct {
 	UpdatedAt   time.Time
 }
 
-type ProgressStageStatus string
-
-const (
-	ProgressStageDone    ProgressStageStatus = "done"
-	ProgressStageActive  ProgressStageStatus = "active"
-	ProgressStagePending ProgressStageStatus = "pending"
-)
-
-type ProgressStage struct {
-	ID          string
-	ClientID    string
-	Step        int
-	Title       string
-	Description string
-	Status      ProgressStageStatus
-	Progress    int
-	DueLabel    string
-	PICName     string
-	UpdatedAt   time.Time
-}
-
 type ScheduleItem struct {
 	ID        string
 	ClientID  string
@@ -355,15 +362,29 @@ type ScheduleItem struct {
 	CreatedAt time.Time
 }
 
-// PipelineStage is an owner/staff-defined column on the pipeline kanban board.
-// Unlike ProgressStage (a per-client onboarding checklist), this is shared,
-// company-wide configuration: the set of stages every client can be placed into.
+// PipelineStage is an owner/staff-defined column on the pipeline kanban
+// board — shared, company-wide configuration: the set of stages every
+// client can be placed into. It's also the single source of truth for the
+// client-facing progress timeline (see ClientStageEvent).
 type PipelineStage struct {
 	ID        string
 	Name      string
 	Position  int
 	Tone      string
 	CreatedAt time.Time
+}
+
+// ClientStageEvent records that a client entered a given pipeline stage at
+// a given time — the append-only log UpdateClientStage writes to on every
+// real transition. The client-facing progress timeline is built by
+// combining these with the current PipelineStage order (see
+// buildClientTimeline in internal/ui/ui.go), instead of the old write-once
+// ProgressStage table that never reflected real pipeline movement.
+type ClientStageEvent struct {
+	ID        string
+	ClientID  string
+	StageName string
+	EnteredAt time.Time
 }
 
 // ServicePackage is an owner-defined catalog entry on the "Paket & Layanan"

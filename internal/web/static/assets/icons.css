@@ -946,6 +946,89 @@
   background: #fef2f2;
 }
 
+/* Client-facing progress timeline (/student/progress, dashboard summary) —
+   a connected vertical line of dots so every pipeline stage (past, current,
+   upcoming) is visible at once, replacing the old single-card display. */
+.stage-timeline {
+  margin-top: 1.25rem;
+  padding-left: 2.25rem;
+  position: relative;
+}
+
+.stage-timeline-item {
+  padding-bottom: 1.35rem;
+  position: relative;
+}
+
+.stage-timeline-item:last-child {
+  padding-bottom: 0;
+}
+
+.stage-timeline-item::before {
+  background: #cbd5e1;
+  bottom: -1.35rem;
+  content: "";
+  left: -1.6rem;
+  position: absolute;
+  top: 1.6rem;
+  width: 2px;
+}
+
+.stage-timeline-item.selesai::before {
+  background: #16a34a;
+}
+
+.stage-timeline-item:last-child::before {
+  display: none;
+}
+
+.stage-timeline-dot {
+  background: #fff;
+  border: 2px solid #cbd5e1;
+  border-radius: 9999px;
+  display: grid;
+  height: 1.5rem;
+  left: -2.25rem;
+  place-items: center;
+  position: absolute;
+  top: 0;
+  width: 1.5rem;
+}
+
+.stage-timeline-item.selesai .stage-timeline-dot {
+  background: #16a34a;
+  border-color: #16a34a;
+}
+
+.stage-timeline-item.selesai .stage-timeline-dot::after {
+  color: #fff;
+  content: "\2713";
+  font-size: .7rem;
+  font-weight: 900;
+}
+
+.stage-timeline-item.berjalan .stage-timeline-dot {
+  background: #eff6ff;
+  border-color: #2563eb;
+}
+
+.stage-timeline-item strong {
+  color: #0f172a;
+  display: block;
+  font-size: .875rem;
+  font-weight: 700;
+}
+
+.stage-timeline-item span {
+  color: #64748b;
+  font-size: .75rem;
+}
+
+.stage-timeline-item.berjalan strong,
+.stage-timeline-item.berjalan span {
+  color: #1d4ed8;
+}
+
 
 .message strong {
   display: block;

@@ -58,10 +58,13 @@ func NewSQLRepository(ctx context.Context, db *sql.DB, driver string, opts SQLRe
 	if err := repo.ensureUsable(ctx); err != nil {
 		return nil, err
 	}
-	if err := repo.ensureStudentProgressDefaults(ctx); err != nil {
+	if err := repo.ensurePipelineStagesSeeded(ctx); err != nil {
 		return nil, err
 	}
-	if err := repo.ensurePipelineStagesSeeded(ctx); err != nil {
+	if err := repo.ensureClientStageHistoryBackfilled(ctx); err != nil {
+		return nil, err
+	}
+	if err := repo.ensureOrderPaymentsBackfilled(ctx); err != nil {
 		return nil, err
 	}
 	if err := repo.ensureServicePackagesSeeded(ctx); err != nil {
@@ -245,12 +248,13 @@ func (r *SQLRepository) CreateStudent(ctx context.Context, input CreateStudentIn
 	if _, err := r.txExec(ctx, tx, `INSERT INTO chat_conversations (id, client_id, staff_id, last_message, updated_at) VALUES (?, ?, ?, ?, ?)`, conversation.ID, conversation.ClientID, conversation.StaffID, "", conversation.UpdatedAt); err != nil {
 		return User{}, err
 	}
-	if _, err := r.txExec(ctx, tx, `INSERT INTO progress_stages (id, client_id, step, title, description, status, progress, due_label, pic_name, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, newID("stage"), client.ID, 1, "Registrasi akun", "Akun client sudah dibuat dan menunggu pemilihan paket serta jadwal konsultasi.", ProgressStageActive, client.Progress, "-", staff.Name, now); err != nil {
+	if _, err := r.txExec(ctx, tx, `INSERT INTO client_stage_history (id, client_id, stage_name, entered_at) VALUES (?, ?, ?, ?)`, newID("stagehist"), client.ID, client.CurrentStage, now); err != nil {
 		return User{}, err
 	}
 	if _, err := r.txExec(ctx, tx, `INSERT INTO activity_log (id, staff_id, client_id, action_type, description, created_at) VALUES (?, ?, ?, ?, ?, ?)`, newID("activity"), staff.ID, client.ID, "client_created", "Client baru ditambahkan: "+client.Name, now); err != nil {
 		return User{}, err
 	}
+	var initialOrderID string
 	if input.InvoiceTotal > 0 {
 		paid := input.AmountPaid
 		if paid < 0 {
@@ -259,34 +263,37 @@ func (r *SQLRepository) CreateStudent(ctx context.Context, input CreateStudentIn
 		if paid > input.InvoiceTotal {
 			paid = input.InvoiceTotal
 		}
-		status := OrderUnpaid
-		var paidAt *time.Time
-		if paid >= input.InvoiceTotal {
-			status = OrderPaid
-			paidAt = &now
-		}
 		order := Order{
 			ID:          newID("order"),
 			Code:        newOrderCode(now),
 			ClientID:    client.ID,
 			PackageName: client.PackageName,
 			Total:       input.InvoiceTotal,
-			Paid:        paid,
-			Status:      status,
+			Status:      OrderUnpaid,
 			DueDate:     now.AddDate(0, 0, 7),
 			CreatedAt:   now,
-			PaidAt:      paidAt,
 		}
-		if _, err := r.txExec(ctx, tx, `INSERT INTO orders (id, code, client_id, package_name, total, paid, status, due_date, created_at, paid_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, order.ID, order.Code, order.ClientID, order.PackageName, order.Total, order.Paid, order.Status, order.DueDate, order.CreatedAt, order.PaidAt); err != nil {
+		initialOrderID = order.ID
+		if _, err := r.txExec(ctx, tx, `INSERT INTO orders (id, code, client_id, package_name, total, paid, status, due_date, created_at, paid_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, order.ID, order.Code, order.ClientID, order.PackageName, order.Total, 0, order.Status, order.DueDate, order.CreatedAt, nil); err != nil {
 			return User{}, err
 		}
-		description := fmt.Sprintf("Invoice %s dibuat: total Rp%d, uang masuk Rp%d", order.Code, order.Total, order.Paid)
+		if paid > 0 {
+			if _, err := r.txExec(ctx, tx, `INSERT INTO order_payments (`+orderPaymentColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, newID("payment"), order.ID, paid, "Setoran awal", "", "", PaymentVerified, staff.ID, now, now, ""); err != nil {
+				return User{}, err
+			}
+		}
+		description := fmt.Sprintf("Invoice %s dibuat: total Rp%d, uang masuk Rp%d", order.Code, order.Total, paid)
 		if _, err := r.txExec(ctx, tx, `INSERT INTO activity_log (id, staff_id, client_id, action_type, description, created_at) VALUES (?, ?, ?, ?, ?, ?)`, newID("activity"), staff.ID, client.ID, "invoice_created", description, now); err != nil {
 			return User{}, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return User{}, err
+	}
+	if initialOrderID != "" {
+		if _, err := r.recomputeOrderPaidState(ctx, initialOrderID); err != nil {
+			return User{}, err
+		}
 	}
 	return user, nil
 }
@@ -329,9 +336,11 @@ func (r *SQLRepository) ResetTestData(ctx context.Context, viewer User) error {
 		"expenses",
 		"tasks",
 		"documents",
+		"order_payments",
 		"orders",
 		"schedules",
 		"progress_stages",
+		"client_stage_history",
 		"activity_log",
 		"clients",
 	}
@@ -474,36 +483,6 @@ func (r *SQLRepository) ListDocuments(ctx context.Context, viewer User, viewRole
 		}
 	}
 	return documents, rows.Err()
-}
-
-func (r *SQLRepository) ListProgressStages(ctx context.Context, viewer User, viewRole Role) ([]ProgressStage, error) {
-	clients, err := r.ListClients(ctx, viewer, viewRole)
-	if err != nil {
-		return nil, err
-	}
-	visible := make(map[string]bool, len(clients))
-	for _, client := range clients {
-		visible[client.ID] = true
-	}
-	rows, err := r.query(ctx, `SELECT id, client_id, step, title, description, status, progress, due_label, pic_name, updated_at FROM progress_stages ORDER BY step ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var stages []ProgressStage
-	for rows.Next() {
-		var stage ProgressStage
-		var status string
-		if err := rows.Scan(&stage.ID, &stage.ClientID, &stage.Step, &stage.Title, &stage.Description, &status, &stage.Progress, &stage.DueLabel, &stage.PICName, &stage.UpdatedAt); err != nil {
-			return nil, err
-		}
-		stage.Status = ProgressStageStatus(status)
-		if visible[stage.ClientID] {
-			stages = append(stages, stage)
-		}
-	}
-	return stages, rows.Err()
 }
 
 func (r *SQLRepository) ListSchedules(ctx context.Context, viewer User, viewRole Role) ([]ScheduleItem, error) {
@@ -697,6 +676,10 @@ func (r *SQLRepository) upsertShipmentCourier(ctx context.Context, name string) 
 	return err
 }
 
+// MarkOrderPaidByCode covers the remaining balance in one shot. The
+// remaining delta (if any) is recorded as a verified ledger entry rather
+// than writing orders.paid directly, so it shows up in "Riwayat Cicilan"
+// like every other payment path.
 func (r *SQLRepository) MarkOrderPaidByCode(ctx context.Context, viewer User, code string) (Order, error) {
 	if viewer.Role != RoleOwner {
 		return Order{}, ErrForbidden
@@ -705,26 +688,31 @@ func (r *SQLRepository) MarkOrderPaidByCode(ctx context.Context, viewer User, co
 	if normalized == "" {
 		return Order{}, ErrInvalidInput
 	}
-	now := time.Now()
-	result, err := r.exec(ctx, `UPDATE orders SET paid = total, status = ?, paid_at = ? WHERE UPPER(code) = ?`, OrderPaid, now, normalized)
-	if err != nil {
-		return Order{}, err
-	}
-	if affected, _ := result.RowsAffected(); affected == 0 {
-		return Order{}, ErrNotFound
-	}
 	order, err := r.findOrderByCode(ctx, normalized)
 	if err != nil {
 		return Order{}, err
 	}
+	if delta := order.Total - order.Paid; delta > 0 {
+		now := time.Now()
+		if err := r.insertOrderPayment(ctx, OrderPayment{
+			ID: newID("payment"), OrderID: order.ID, Amount: delta, Note: "Ditandai lunas manual",
+			Status: PaymentVerified, SubmittedBy: viewer.ID, SubmittedAt: now, VerifiedAt: &now,
+		}); err != nil {
+			return Order{}, err
+		}
+	}
+	updated, err := r.recomputeOrderPaidState(ctx, order.ID)
+	if err != nil {
+		return Order{}, err
+	}
 	r.logActivity(ctx, viewer.ID, order.ClientID, "order_marked_paid", "Order "+order.Code+" ditandai lunas")
-	return order, nil
+	return updated, nil
 }
 
 // RecordOrderPayment adds an incoming payment to an existing invoice (e.g. a
-// cicilan/installment) instead of marking it fully paid outright. It clamps
-// the running total at the invoice total and flips the order to OrderPaid
-// once fully covered.
+// cicilan/installment) instead of marking it fully paid outright — recorded
+// as a verified ledger entry, then orders.paid/status recomputed from the
+// ledger sum.
 func (r *SQLRepository) RecordOrderPayment(ctx context.Context, viewer User, code string, amount int64) (Order, error) {
 	if viewer.Role != RoleOwner {
 		return Order{}, ErrForbidden
@@ -743,27 +731,28 @@ func (r *SQLRepository) RecordOrderPayment(ctx context.Context, viewer User, cod
 	if order.Status == OrderPaid {
 		return order, nil
 	}
-	newPaid := order.Paid + amount
-	if newPaid >= order.Total {
-		newPaid = order.Total
-		now := time.Now()
-		if _, err := r.exec(ctx, `UPDATE orders SET paid = ?, status = ?, paid_at = ? WHERE id = ?`, newPaid, OrderPaid, now, order.ID); err != nil {
-			return Order{}, err
-		}
-	} else {
-		if _, err := r.exec(ctx, `UPDATE orders SET paid = ? WHERE id = ?`, newPaid, order.ID); err != nil {
-			return Order{}, err
-		}
+	now := time.Now()
+	if err := r.insertOrderPayment(ctx, OrderPayment{
+		ID: newID("payment"), OrderID: order.ID, Amount: amount, Note: "Pembayaran dicatat manual",
+		Status: PaymentVerified, SubmittedBy: viewer.ID, SubmittedAt: now, VerifiedAt: &now,
+	}); err != nil {
+		return Order{}, err
 	}
-	order, err = r.findOrderByCode(ctx, normalized)
+	updated, err := r.recomputeOrderPaidState(ctx, order.ID)
 	if err != nil {
 		return Order{}, err
 	}
 	r.logActivity(ctx, viewer.ID, order.ClientID, "order_payment_recorded", fmt.Sprintf("Pembayaran Rp%d dicatat untuk order %s", amount, order.Code))
-	return order, nil
+	return updated, nil
 }
 
-func (r *SQLRepository) SubmitPaymentProof(ctx context.Context, viewer User, code, note, fileName, storagePath string) (Order, error) {
+// SubmitPaymentProof records a client's claimed cicilan as a pending ledger
+// entry (with its own amount/proof), instead of overwriting a single
+// proof_* slot on the order — so multiple submissions over time all stay
+// visible in "Riwayat Cicilan" rather than the latest clobbering the rest.
+// It does not touch orders.paid; that only moves once an owner/staff
+// verifies the entry via VerifyOrderPayment.
+func (r *SQLRepository) SubmitPaymentProof(ctx context.Context, viewer User, code string, amount int64, note, fileName, storagePath string) (Order, error) {
 	if viewer.Role != RoleStudent {
 		return Order{}, ErrForbidden
 	}
@@ -781,7 +770,18 @@ func (r *SQLRepository) SubmitPaymentProof(ctx context.Context, viewer User, cod
 	if order.Status == OrderPaid {
 		return order, nil
 	}
-	if _, err := r.exec(ctx, `UPDATE orders SET status = ?, proof_note = ?, proof_file_name = ?, proof_storage_path = ? WHERE id = ?`, OrderWaitingVerification, strings.TrimSpace(note), strings.TrimSpace(fileName), strings.TrimSpace(storagePath), order.ID); err != nil {
+	if amount <= 0 {
+		return Order{}, ErrInvalidInput
+	}
+	now := time.Now()
+	if err := r.insertOrderPayment(ctx, OrderPayment{
+		ID: newID("payment"), OrderID: order.ID, Amount: amount,
+		Note: strings.TrimSpace(note), ProofFileName: strings.TrimSpace(fileName), ProofStoragePath: strings.TrimSpace(storagePath),
+		Status: PaymentPending, SubmittedBy: viewer.ID, SubmittedAt: now,
+	}); err != nil {
+		return Order{}, err
+	}
+	if _, err := r.exec(ctx, `UPDATE orders SET status = ? WHERE id = ?`, OrderWaitingVerification, order.ID); err != nil {
 		return Order{}, err
 	}
 	return r.findOrderByCode(ctx, order.Code)
@@ -818,36 +818,45 @@ func (r *SQLRepository) CreateOrder(ctx context.Context, viewer User, input Crea
 	if dueDate.IsZero() {
 		dueDate = now.AddDate(0, 0, 7)
 	}
-	status := OrderUnpaid
-	var paidAt *time.Time
-	if paid >= input.Total {
-		status = OrderPaid
-		paidAt = &now
-	}
 	order := Order{
 		ID:          newID("order"),
 		Code:        newOrderCode(now),
 		ClientID:    client.ID,
 		PackageName: packageName,
 		Total:       input.Total,
-		Paid:        paid,
-		Status:      status,
+		Status:      OrderUnpaid,
 		DueDate:     dueDate,
 		CreatedAt:   now,
-		PaidAt:      paidAt,
 	}
-	if _, err := r.exec(ctx, `INSERT INTO orders (id, code, client_id, package_name, total, paid, status, due_date, created_at, paid_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, order.ID, order.Code, order.ClientID, order.PackageName, order.Total, order.Paid, order.Status, order.DueDate, order.CreatedAt, order.PaidAt); err != nil {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
 		return Order{}, err
 	}
-	description := fmt.Sprintf("Invoice %s dibuat: total Rp%d, uang masuk Rp%d", order.Code, order.Total, order.Paid)
+	defer func() { _ = tx.Rollback() }()
+	if _, err := r.txExec(ctx, tx, `INSERT INTO orders (id, code, client_id, package_name, total, paid, status, due_date, created_at, paid_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, order.ID, order.Code, order.ClientID, order.PackageName, order.Total, 0, order.Status, order.DueDate, order.CreatedAt, nil); err != nil {
+		return Order{}, err
+	}
+	if paid > 0 {
+		if _, err := r.txExec(ctx, tx, `INSERT INTO order_payments (`+orderPaymentColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, newID("payment"), order.ID, paid, "Setoran awal", "", "", PaymentVerified, viewer.ID, now, now, ""); err != nil {
+			return Order{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return Order{}, err
+	}
+	updated, err := r.recomputeOrderPaidState(ctx, order.ID)
+	if err != nil {
+		return Order{}, err
+	}
+	description := fmt.Sprintf("Invoice %s dibuat: total Rp%d, uang masuk Rp%d", order.Code, order.Total, updated.Paid)
 	r.logActivity(ctx, viewer.ID, client.ID, "invoice_created", description)
-	return r.findOrderByCode(ctx, order.Code)
+	return updated, nil
 }
 
-// UpdateOrder edits an order's package/total/due date. The paid amount is
-// deliberately out of scope — RecordOrderPayment/MarkOrderPaidByCode own
-// that invariant — but changing the total can flip the derived status back
-// to unpaid if it now exceeds what's already been paid in.
+// UpdateOrder edits an order's package/total/paid/due date. A change in
+// paid from the order's current (ledger-summed) amount is recorded as a
+// signed adjustment entry in order_payments — increases and decreases both
+// allowed — before orders.paid/status is recomputed from the ledger.
 func (r *SQLRepository) UpdateOrder(ctx context.Context, viewer User, orderID string, input UpdateOrderInput) (Order, error) {
 	if viewer.Role != RoleOwner {
 		return Order{}, ErrForbidden
@@ -874,22 +883,28 @@ func (r *SQLRepository) UpdateOrder(ctx context.Context, viewer User, orderID st
 	if dueDate.IsZero() {
 		dueDate = order.DueDate
 	}
-	status := OrderUnpaid
-	paidAt := order.PaidAt
-	if paid >= input.Total {
-		status = OrderPaid
-		if paidAt == nil {
-			now := time.Now()
-			paidAt = &now
-		}
-	} else {
-		paidAt = nil
-	}
-	if _, err := r.exec(ctx, `UPDATE orders SET package_name = ?, total = ?, paid = ?, due_date = ?, status = ?, paid_at = ? WHERE id = ?`, packageName, input.Total, paid, dueDate, status, paidAt, order.ID); err != nil {
+	if _, err := r.exec(ctx, `UPDATE orders SET package_name = ?, total = ?, due_date = ? WHERE id = ?`, packageName, input.Total, dueDate, order.ID); err != nil {
 		return Order{}, err
 	}
-	r.logActivity(ctx, viewer.ID, order.ClientID, "invoice_updated", fmt.Sprintf("Invoice %s diperbarui: total Rp%d, uang masuk Rp%d", order.Code, input.Total, paid))
-	return r.findOrderByID(ctx, order.ID)
+	var currentPaid int64
+	if err := r.queryRow(ctx, `SELECT COALESCE(SUM(amount), 0) FROM order_payments WHERE order_id = ? AND status = ?`, order.ID, PaymentVerified).Scan(&currentPaid); err != nil {
+		return Order{}, err
+	}
+	if delta := paid - currentPaid; delta != 0 {
+		now := time.Now()
+		if err := r.insertOrderPayment(ctx, OrderPayment{
+			ID: newID("payment"), OrderID: order.ID, Amount: delta, Note: "Penyesuaian manual",
+			Status: PaymentVerified, SubmittedBy: viewer.ID, SubmittedAt: now, VerifiedAt: &now,
+		}); err != nil {
+			return Order{}, err
+		}
+	}
+	updated, err := r.recomputeOrderPaidState(ctx, order.ID)
+	if err != nil {
+		return Order{}, err
+	}
+	r.logActivity(ctx, viewer.ID, order.ClientID, "invoice_updated", fmt.Sprintf("Invoice %s diperbarui: total Rp%d, uang masuk Rp%d", order.Code, input.Total, updated.Paid))
+	return updated, nil
 }
 
 // DeleteOrder removes an invoice outright — unlike clients/staff, orders
@@ -901,6 +916,9 @@ func (r *SQLRepository) DeleteOrder(ctx context.Context, viewer User, orderID st
 	}
 	order, err := r.findOrderByID(ctx, orderID)
 	if err != nil {
+		return err
+	}
+	if _, err := r.exec(ctx, `DELETE FROM order_payments WHERE order_id = ?`, order.ID); err != nil {
 		return err
 	}
 	result, err := r.exec(ctx, `DELETE FROM orders WHERE id = ?`, order.ID)
@@ -934,13 +952,6 @@ func (r *SQLRepository) StudentHasPaymentAccess(ctx context.Context, viewer User
 
 func (r *SQLRepository) UploadStudentDocument(ctx context.Context, viewer User, documentName, fileName, storagePath string) (Document, error) {
 	if viewer.Role != RoleStudent {
-		return Document{}, ErrForbidden
-	}
-	allowed, err := r.StudentHasPaymentAccess(ctx, viewer)
-	if err != nil {
-		return Document{}, err
-	}
-	if !allowed {
 		return Document{}, ErrForbidden
 	}
 	documentName = strings.TrimSpace(documentName)
@@ -1431,11 +1442,28 @@ func (r *SQLRepository) UpdateClientStage(ctx context.Context, viewer User, clie
 	stageName = strings.TrimSpace(stageName)
 	status := stageName
 	progress := client.Progress
-	if strings.EqualFold(stageName, "Selesai") {
-		progress = 100
+	stages, err := r.ListPipelineStages(ctx)
+	if err != nil {
+		return ClientProfile{}, err
+	}
+	for i, stage := range stages {
+		if stage.Name != stageName {
+			continue
+		}
+		if i == len(stages)-1 {
+			progress = 100
+		} else {
+			progress = i * 100 / len(stages)
+		}
+		break
 	}
 	if _, err := r.exec(ctx, `UPDATE clients SET current_stage = ?, status = ?, progress = ? WHERE id = ?`, stageName, status, progress, clientID); err != nil {
 		return ClientProfile{}, err
+	}
+	if stageName != client.CurrentStage {
+		if _, err := r.exec(ctx, `INSERT INTO client_stage_history (id, client_id, stage_name, entered_at) VALUES (?, ?, ?, ?)`, newID("stagehist"), clientID, stageName, time.Now()); err != nil {
+			return ClientProfile{}, err
+		}
 	}
 	return r.findClientByID(ctx, clientID)
 }

@@ -70,6 +70,19 @@ func postgresSchema() []string {
 		)`,
 		`ALTER TABLE orders ADD COLUMN IF NOT EXISTS proof_file_name VARCHAR(255) NOT NULL DEFAULT ''`,
 		`ALTER TABLE orders ADD COLUMN IF NOT EXISTS proof_storage_path TEXT NOT NULL DEFAULT ''`,
+		`CREATE TABLE IF NOT EXISTS order_payments (
+			id VARCHAR(64) PRIMARY KEY,
+			order_id VARCHAR(64) NOT NULL,
+			amount BIGINT NOT NULL DEFAULT 0,
+			note TEXT NOT NULL DEFAULT '',
+			proof_file_name VARCHAR(255) NOT NULL DEFAULT '',
+			proof_storage_path TEXT NOT NULL DEFAULT '',
+			status VARCHAR(64) NOT NULL,
+			submitted_by VARCHAR(64) NOT NULL DEFAULT '',
+			submitted_at TIMESTAMPTZ NOT NULL,
+			verified_at TIMESTAMPTZ,
+			reject_reason TEXT NOT NULL DEFAULT ''
+		)`,
 		`CREATE TABLE IF NOT EXISTS documents (
 			id VARCHAR(64) PRIMARY KEY,
 			client_id VARCHAR(64) NOT NULL,
@@ -174,6 +187,12 @@ func postgresSchema() []string {
 			position INTEGER NOT NULL DEFAULT 0,
 			tone VARCHAR(32) NOT NULL DEFAULT 'mint',
 			created_at TIMESTAMPTZ NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS client_stage_history (
+			id VARCHAR(64) PRIMARY KEY,
+			client_id VARCHAR(64) NOT NULL,
+			stage_name VARCHAR(191) NOT NULL,
+			entered_at TIMESTAMPTZ NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS service_packages (
 			id VARCHAR(64) PRIMARY KEY,
@@ -296,6 +315,19 @@ func mysqlSchema() []string {
 			paid_at TIMESTAMP NULL,
 			UNIQUE KEY orders_code_unique (code)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS order_payments (
+			id VARCHAR(64) PRIMARY KEY,
+			order_id VARCHAR(64) NOT NULL,
+			amount BIGINT NOT NULL DEFAULT 0,
+			note TEXT NOT NULL,
+			proof_file_name VARCHAR(255) NOT NULL DEFAULT '',
+			proof_storage_path VARCHAR(1024) NOT NULL DEFAULT '',
+			status VARCHAR(64) NOT NULL,
+			submitted_by VARCHAR(64) NOT NULL DEFAULT '',
+			submitted_at TIMESTAMP NOT NULL,
+			verified_at TIMESTAMP NULL,
+			reject_reason TEXT NOT NULL
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 		`CREATE TABLE IF NOT EXISTS documents (
 			id VARCHAR(64) PRIMARY KEY,
 			client_id VARCHAR(64) NOT NULL,
@@ -402,6 +434,12 @@ func mysqlSchema() []string {
 			position INT NOT NULL DEFAULT 0,
 			tone VARCHAR(32) NOT NULL DEFAULT 'mint',
 			created_at TIMESTAMP NOT NULL
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS client_stage_history (
+			id VARCHAR(64) PRIMARY KEY,
+			client_id VARCHAR(64) NOT NULL,
+			stage_name VARCHAR(191) NOT NULL,
+			entered_at TIMESTAMP NOT NULL
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 		`CREATE TABLE IF NOT EXISTS service_packages (
 			id VARCHAR(64) PRIMARY KEY,

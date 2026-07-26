@@ -82,6 +82,66 @@ func (h Handler) updateOrder(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, invoicesPath+"?order="+url.QueryEscape(order.Code)+"&notice="+url.QueryEscape("Order "+order.Code+" berhasil diperbarui."), http.StatusSeeOther)
 }
 
+func (h Handler) verifyOrderPayment(w http.ResponseWriter, r *http.Request) {
+	viewer := currentUser(r)
+	if viewer.Role != dashboard.RoleOwner {
+		http.Error(w, "akses ditolak", http.StatusForbidden)
+		return
+	}
+	order, err := h.store.VerifyOrderPayment(r.Context(), viewer, chi.URLParam(r, "paymentID"))
+	notice := "Cicilan berhasil diverifikasi."
+	if err != nil {
+		notice = "Gagal memverifikasi cicilan."
+		http.Redirect(w, r, invoicesPath+"?notice="+url.QueryEscape(notice), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, invoicesPath+"?order="+url.QueryEscape(order.Code)+"&notice="+url.QueryEscape(notice), http.StatusSeeOther)
+}
+
+func (h Handler) rejectOrderPayment(w http.ResponseWriter, r *http.Request) {
+	viewer := currentUser(r)
+	if viewer.Role != dashboard.RoleOwner {
+		http.Error(w, "akses ditolak", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		return
+	}
+	order, err := h.store.RejectOrderPayment(r.Context(), viewer, chi.URLParam(r, "paymentID"), r.FormValue("reason"))
+	notice := "Cicilan ditolak."
+	if err != nil {
+		notice = "Gagal menolak cicilan."
+		http.Redirect(w, r, invoicesPath+"?notice="+url.QueryEscape(notice), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, invoicesPath+"?order="+url.QueryEscape(order.Code)+"&notice="+url.QueryEscape(notice), http.StatusSeeOther)
+}
+
+func (h Handler) createManualInstallment(w http.ResponseWriter, r *http.Request) {
+	viewer := currentUser(r)
+	if viewer.Role != dashboard.RoleOwner {
+		http.Error(w, "akses ditolak", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		return
+	}
+	orderID := chi.URLParam(r, "orderID")
+	amount := parseOrderAmount(r.FormValue("amount"))
+	if amount <= 0 {
+		http.Redirect(w, r, invoicesPath+"?notice="+url.QueryEscape("Jumlah cicilan wajib diisi."), http.StatusSeeOther)
+		return
+	}
+	order, err := h.store.CreateManualInstallment(r.Context(), viewer, orderID, amount, r.FormValue("note"))
+	if err != nil {
+		http.Redirect(w, r, invoicesPath+"?notice="+url.QueryEscape("Gagal menambahkan cicilan manual."), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, invoicesPath+"?order="+url.QueryEscape(order.Code)+"&notice="+url.QueryEscape("Cicilan manual berhasil ditambahkan."), http.StatusSeeOther)
+}
+
 func (h Handler) deleteOrder(w http.ResponseWriter, r *http.Request) {
 	viewer := currentUser(r)
 	if viewer.Role != dashboard.RoleOwner {

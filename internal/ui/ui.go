@@ -825,18 +825,31 @@ func ownerInvoices(vm dashboard.ViewModel) string {
 		invoiceList.WriteString(`<p class="empty-note">Tidak ada invoice pada filter ini.</p>`)
 	}
 
-	proofDetail := `<div><span>Belum ada bukti pembayaran</span><strong>-</strong></div>`
-	if active.ProofFileName != "" || active.ProofNote != "" {
-		fileName := active.ProofFileName
-		if fileName == "" {
-			fileName = "-"
+	var paymentRows strings.Builder
+	for _, payment := range vm.OrderPayments {
+		if payment.OrderID != active.ID {
+			continue
 		}
-		note := active.ProofNote
+		note := payment.Note
 		if note == "" {
 			note = "-"
 		}
-		proofDetail = `<div><span>Bukti Pembayaran</span><strong>` + esc(fileName) + `</strong></div><div><span>Catatan Transfer</span><strong>` + esc(note) + `</strong></div>`
+		proofCell := "-"
+		if payment.ProofStoragePath != "" {
+			proofCell = `<a href="/payments/` + attr(payment.ID) + `/proof" target="_blank" rel="noopener">Lihat</a>`
+		}
+		actions := "-"
+		if payment.Status == dashboard.PaymentPending {
+			actions = `<form method="post" action="/owner/invoices/payments/` + attr(payment.ID) + `/verify" class="inline-form"><button type="submit" class="icon-action">Verifikasi</button></form> <form method="post" action="/owner/invoices/payments/` + attr(payment.ID) + `/reject" class="inline-form" data-confirm="Tolak cicilan Rp` + attr(money(payment.Amount)) + ` ini?"><button type="submit" class="icon-action icon-action-danger">Tolak</button></form>`
+		} else if payment.Status == dashboard.PaymentRejected && payment.RejectReason != "" {
+			actions = esc(payment.RejectReason)
+		}
+		paymentRows.WriteString(`<tr><td>` + esc(dateLabel(payment.SubmittedAt)) + `<span class="block text-xs text-slate-500">` + esc(note) + `</span></td><td>` + money(payment.Amount) + `</td><td><span class="status ` + paymentStatusClass(payment.Status) + `">` + paymentStatusLabel(payment.Status) + `</span></td><td>` + proofCell + `</td><td>` + actions + `</td></tr>`)
 	}
+	if paymentRows.Len() == 0 {
+		paymentRows.WriteString(`<tr><td colspan="5">Belum ada cicilan.</td></tr>`)
+	}
+	paymentsTable := `<table class="data-table mt-3"><thead><tr><th>Tanggal &amp; Catatan</th><th>Jumlah</th><th>Status</th><th>Bukti</th><th>Aksi</th></tr></thead><tbody>` + paymentRows.String() + `</tbody></table>`
 	statusClass := orderStatusClass(active.Status)
 	client := findClientByID(vm.Clients, active.ClientID)
 	waHref := waLink(client.Phone, "Halo "+active.ClientName+", ini invoice "+active.Code+" sebesar "+money(active.Total)+" dari Formora Taiwan.")
@@ -846,16 +859,16 @@ func ownerInvoices(vm dashboard.ViewModel) string {
 	deleteConfirm := "Hapus order " + active.Code + "? Tindakan ini tidak bisa dibatalkan."
 	commActions := `<div class="action-stack"><a class="success-button" href="` + attr(waHref) + `" target="_blank" rel="noopener">Kirim Invoice (WA)</a><a class="primary-button" href="` + attr(mailHref) + `">Kirim Invoice (Email)</a><a class="outline-button" href="` + attr(pdfHref) + `">Download PDF</a><a class="outline-button" href="` + attr(editHref) + `" hx-get="` + attr(editHref) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Edit Order</a><form method="post" action="` + invoicesPath + `/` + attr(active.ID) + `/delete" data-confirm="` + attr(deleteConfirm) + `"><button type="submit" class="danger-button" style="width:100%">Hapus Order</button></form></div>`
 
-	recordPaymentForm := `<form method="post" action="/owner/orders/record-payment" class="student-upload-form mt-3"><input type="hidden" name="order_code" value="` + attr(active.Code) + `"><label>Catat Pembayaran Masuk (IDR)<input name="amount" type="number" min="1" max="` + strconv.FormatInt(active.Total-active.Paid, 10) + `" required placeholder="Contoh: 2000000"></label><button class="outline-button" type="submit">Catat Pembayaran</button></form>`
+	manualInstallmentForm := `<form method="post" action="/owner/invoices/` + attr(active.ID) + `/payments/create" class="student-upload-form mt-3"><label>Tambah Cicilan Manual (IDR)<input name="amount" type="number" min="1" max="` + strconv.FormatInt(active.Total-active.Paid, 10) + `" required placeholder="Contoh: 2000000"></label><label>Catatan<input name="note" placeholder="Contoh: Transfer BCA a.n. client"></label><button class="outline-button" type="submit">Tambah Cicilan</button></form>`
 
 	var statusAction string
 	switch active.Status {
 	case dashboard.OrderPaid:
 		statusAction = `<div class="invoice-status-note is-paid"><strong>Invoice sudah lunas</strong><p>Pembayaran sudah tercatat penuh di sistem.</p></div>`
 	case dashboard.OrderWaitingVerification:
-		statusAction = `<div class="invoice-status-note"><strong>Menunggu verifikasi</strong><p>Client sudah mengirim bukti transfer. Cek bukti pembayaran di samping, lalu konfirmasi jika sudah sesuai.</p><form method="post" action="/owner/orders/mark-paid"><input type="hidden" name="order_code" value="` + attr(active.Code) + `"><button class="success-button" type="submit">Verifikasi &amp; Tandai Lunas</button></form>` + recordPaymentForm + `</div>`
+		statusAction = `<div class="invoice-status-note"><strong>Menunggu verifikasi</strong><p>Client sudah mengirim cicilan baru. Verifikasi atau tolak dari daftar Riwayat Cicilan di bawah, atau tandai lunas langsung kalau sudah pasti.</p><form method="post" action="/owner/orders/mark-paid"><input type="hidden" name="order_code" value="` + attr(active.Code) + `"><button class="success-button" type="submit">Tandai Lunas</button></form>` + manualInstallmentForm + `</div>`
 	default:
-		statusAction = `<div class="invoice-status-note"><strong>Belum ada pembayaran</strong><p>Catat cicilan yang sudah masuk, atau tandai lunas manual jika client sudah transfer penuh di luar sistem.</p><form method="post" action="/owner/orders/mark-paid"><input type="hidden" name="order_code" value="` + attr(active.Code) + `"><button class="outline-button" type="submit">Tandai Lunas Manual</button></form>` + recordPaymentForm + `</div>`
+		statusAction = `<div class="invoice-status-note"><strong>Belum ada pembayaran</strong><p>Catat cicilan yang sudah masuk, atau tandai lunas manual jika client sudah transfer penuh di luar sistem.</p><form method="post" action="/owner/orders/mark-paid"><input type="hidden" name="order_code" value="` + attr(active.Code) + `"><button class="outline-button" type="submit">Tandai Lunas Manual</button></form>` + manualInstallmentForm + `</div>`
 	}
 
 	return `<div class="space-y-5">` + addModal + `
@@ -864,7 +877,7 @@ func ownerInvoices(vm dashboard.ViewModel) string {
   <section class="panel">
     <div class="invoice-head"><div><p>Invoice <strong>#` + esc(active.Code) + `</strong></p><span>` + esc(active.ClientName) + ` &middot; ` + esc(active.PackageName) + `</span></div><div><p>Jatuh Tempo</p><strong>` + esc(dateLabel(active.DueDate)) + `</strong></div></div>
     <div class="invoice-layout">
-      <div><dl class="detail-grid"><div><dt>Nama Klien</dt><dd>` + esc(active.ClientName) + `</dd></div><div><dt>Paket / Layanan</dt><dd>` + esc(active.PackageName) + `</dd></div><div><dt>Kode Pesanan</dt><dd>` + esc(active.Code) + `</dd></div><div><dt>Total Tagihan</dt><dd>` + money(active.Total) + `</dd></div><div><dt>Status Pembayaran</dt><dd><span class="status ` + statusClass + `">` + esc(orderStatusLabel(active.Status)) + `</span></dd></div></dl><div class="invoice-box"><h3>Rincian Tagihan</h3><div><span>` + esc(active.PackageName) + `</span><strong>` + money(active.Total) + `</strong></div><div><span>Sudah Dibayar (Uang Masuk)</span><strong>` + money(active.Paid) + `</strong></div><div class="total"><span>Kekurangan</span><strong>` + money(active.Total-active.Paid) + `</strong></div></div><div class="invoice-box"><h3>Bukti Pembayaran</h3>` + proofDetail + `</div></div>
+      <div><dl class="detail-grid"><div><dt>Nama Klien</dt><dd>` + esc(active.ClientName) + `</dd></div><div><dt>Paket / Layanan</dt><dd>` + esc(active.PackageName) + `</dd></div><div><dt>Kode Pesanan</dt><dd>` + esc(active.Code) + `</dd></div><div><dt>Total Tagihan</dt><dd>` + money(active.Total) + `</dd></div><div><dt>Status Pembayaran</dt><dd><span class="status ` + statusClass + `">` + esc(orderStatusLabel(active.Status)) + `</span></dd></div></dl><div class="invoice-box"><h3>Rincian Tagihan</h3><div><span>` + esc(active.PackageName) + `</span><strong>` + money(active.Total) + `</strong></div><div><span>Sudah Dibayar (Uang Masuk)</span><strong>` + money(active.Paid) + `</strong></div><div class="total"><span>Kekurangan</span><strong>` + money(active.Total-active.Paid) + `</strong></div></div><div class="invoice-box"><h3>Riwayat Cicilan</h3>` + paymentsTable + `</div></div>
       <div class="invoice-rail">` + statusAction + commActions + `</div>
     </div>
   </section>
@@ -1125,6 +1138,10 @@ func staffExpenses(vm dashboard.ViewModel) string {
 
 func studentDashboard(vm dashboard.ViewModel) string {
 	client := firstClient(vm.Clients)
+	timeline := buildClientTimeline(vm.PipelineStages, vm.ClientStageHistory, client.CurrentStage)
+	timelineDone := countTimelineDone(timeline)
+	timelineTotal := len(timeline)
+	timelinePct := timelinePercent(timeline)
 	total, paid := orderTotals(vm.Orders)
 	remaining := total - paid
 	if remaining < 0 {
@@ -1136,12 +1153,12 @@ func studentDashboard(vm dashboard.ViewModel) string {
 		onboarding = `<section class="student-onboarding"><strong>Akun client aktif</strong><span>Fitur dokumen dan chat dibuka setelah bukti pembayaran dikirim atau invoice lunas. Jadwal dan tahapan berikutnya akan diatur oleh konsultan.</span><a href="/student/payments" hx-get="/student/payments" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Cek Pembayaran</a></section>`
 	}
 	chatAction := lockedStudentAction(vm, "Chat", "/student/chat")
-	docAction := lockedStudentAction(vm, "Upload", "/student/documents")
+	docAction := studentActionLink("Upload", "/student/documents")
 	return `
 <div class="space-y-5">
   <section class="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,.9fr)_minmax(0,.8fr)]">
-    <div class="panel student-hero"><span class="service-badge bg-emerald-100 text-emerald-700">` + esc(client.PackageName) + `</span><h2>` + esc(client.Name) + `</h2><p>` + esc(client.Campus) + `</p><div class="student-progress"><strong>` + intText(client.Progress) + `%</strong><span>` + esc(client.CurrentStage) + `</span></div></div>
-    <div class="panel"><div class="panel-head"><h2>Progress Keseluruhan</h2><a href="/student/progress" hx-get="/student/progress" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Detail</a></div><div class="progress-ring" style="` + progressRingStyle(client.Progress) + `"><span>` + intText(client.Progress) + `%</span></div><p class="mt-4 text-sm text-slate-500">Tahap saat ini: ` + esc(client.CurrentStage) + `. ` + intText(countDoneStages(vm.ProgressStages)) + ` dari ` + intText(len(vm.ProgressStages)) + ` tahap selesai.</p></div>
+    <div class="panel student-hero"><span class="service-badge bg-emerald-100 text-emerald-700">` + esc(client.PackageName) + `</span><h2>` + esc(client.Name) + `</h2><p>` + esc(client.Campus) + `</p><div class="student-progress"><strong>` + intText(timelinePct) + `%</strong><span>` + esc(client.CurrentStage) + `</span></div></div>
+    <div class="panel"><div class="panel-head"><h2>Progress Keseluruhan</h2><a href="/student/progress" hx-get="/student/progress" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Detail</a></div><div class="progress-ring" style="` + progressRingStyle(timelinePct) + `"><span>` + intText(timelinePct) + `%</span></div><p class="mt-4 text-sm text-slate-500">Tahap saat ini: ` + esc(client.CurrentStage) + `. ` + intText(timelineDone) + ` dari ` + intText(timelineTotal) + ` tahap selesai.</p></div>
     <div class="panel"><div class="panel-head"><h2>Konsultan</h2></div><div class="consultant-card"><span class="avatar-mini bg-emerald-100 text-emerald-700">` + initials(client.PICName) + `</span><div><strong>` + esc(client.PICName) + `</strong><p>Staff Konsultan</p></div></div><div class="action-grid">` + chatAction + `</div></div>
   </section>
   <section class="metric-grid metric-grid-four">
@@ -1160,34 +1177,37 @@ func studentDashboard(vm dashboard.ViewModel) string {
 
 func studentProgress(vm dashboard.ViewModel) string {
 	client := firstClient(vm.Clients)
-	active := activeStage(vm.ProgressStages)
-	var steps strings.Builder
-	for _, stage := range vm.ProgressStages {
-		steps.WriteString(`<span class="` + attr(string(stage.Status)) + `">` + intText(stage.Step) + `</span>`)
+	timeline := buildClientTimeline(vm.PipelineStages, vm.ClientStageHistory, client.CurrentStage)
+	active := activeTimelineEntry(timeline)
+	completed := countTimelineDone(timeline)
+	percent := timelinePercent(timeline)
+
+	var items strings.Builder
+	for _, entry := range timeline {
+		statusLine := stageTimelineLabel(entry.Status)
+		if entry.Status == "selesai" && entry.DateLabel != "" {
+			statusLine += " &middot; " + esc(entry.DateLabel)
+		}
+		items.WriteString(`<div class="stage-timeline-item ` + attr(entry.Status) + `"><span class="stage-timeline-dot"></span><div><strong>` + esc(entry.Name) + `</strong><span>` + statusLine + `</span></div></div>`)
 	}
-	var rows strings.Builder
-	for _, stage := range vm.ProgressStages {
-		rows.WriteString(`<tr><td>` + intText(stage.Step) + `. ` + esc(stage.Title) + `</td><td>` + esc(stage.Description) + `</td><td><span class="status ` + progressStatusClass(stage.Status) + `">` + esc(progressStatusLabel(stage.Status)) + `</span></td><td>` + esc(stage.DueLabel) + `</td><td>` + esc(stage.PICName) + `</td></tr>`)
+	if items.Len() == 0 {
+		items.WriteString(`<p class="empty-note">Belum ada tahap yang ditentukan. Owner/staff bisa mengatur daftar tahap lewat Pipeline &gt; Kelola Tahap.</p>`)
 	}
-	if rows.Len() == 0 {
-		rows.WriteString(`<tr><td colspan="5">Belum ada data progress.</td></tr>`)
+
+	statusNote := `<div class="student-onboarding compact mt-5"><strong>` + esc(active.Name) + ` sedang berjalan</strong><span>Tahap ini akan otomatis ditandai selesai saat owner/staff memindahkan kartu kamu ke tahap berikutnya di Pipeline.</span></div>`
+	if len(timeline) > 0 && percent == 100 {
+		statusNote = `<div class="student-onboarding compact mt-5"><strong>Semua tahap selesai</strong><span>Perjalanan kamu di Pipeline sudah mencapai tahap terakhir.</span></div>`
 	}
-	completed := countDoneStages(vm.ProgressStages)
-	totalStages := len(vm.ProgressStages)
 	return `
 <div class="panel">
-  <div class="stepper">` + steps.String() + `</div>
-  <div class="panel-head mt-6"><div><h2>Detail Tahap: ` + esc(active.Title) + `</h2><p>Progress keseluruhan ` + intText(client.Progress) + `% - ` + intText(completed) + ` dari ` + intText(totalStages) + ` tahap selesai</p></div>` + lockedStudentAction(vm, "Upload Dokumen", "/student/documents") + `</div>
-  <div class="student-onboarding compact"><strong>` + esc(active.Title) + ` sedang berjalan</strong><span>` + esc(active.Description) + `</span></div>
-  <div class="stage-progress"><i style="width:` + percentStyle(client.Progress) + `"></i></div>
-  <table class="data-table mt-5"><thead><tr><th>Tahap</th><th>Deskripsi</th><th>Status</th><th>Deadline</th><th>PIC</th></tr></thead><tbody>` + rows.String() + `</tbody></table>
+  <div class="panel-head"><div><h2>Progress keseluruhan</h2><p>` + intText(percent) + `% &middot; ` + intText(completed) + ` dari ` + intText(len(timeline)) + ` tahap selesai</p></div>` + studentActionLink("Upload Dokumen", "/student/documents") + `</div>
+  <div class="stage-progress"><i style="width:` + percentStyle(percent) + `"></i></div>
+  <div class="stage-timeline">` + items.String() + `</div>
+  ` + statusNote + `
 </div>`
 }
 
 func studentDocuments(vm dashboard.ViewModel) string {
-	if !vm.StudentFeatureAccess {
-		return lockedStudentFeature("Dokumen dibuka setelah pembayaran", "Kirim bukti pembayaran atau tunggu invoice ditandai lunas sebelum mengunggah dokumen.")
-	}
 	return `<div class="grid gap-5 xl:grid-cols-[minmax(0,.8fr)_minmax(0,1.2fr)]"><section class="panel"><div class="panel-head"><div><h2>Upload Dokumen</h2><p>Unggah file sesuai permintaan konsultan.</p></div></div><form method="post" action="/student/documents/upload" enctype="multipart/form-data" class="student-upload-form"><label>Jenis dokumen<select name="document_name" required><option>Passport</option><option>Ijazah Terakhir</option><option>Transkrip Nilai</option><option>Foto Background Putih 4x6</option><option>KTP</option><option>KK</option><option>Akta Kelahiran</option><option>Autobiografi</option><option>Mutasi Rekening</option><option>Surat Rekomendasi</option></select></label><label>File dokumen<input name="document_file" type="file" required></label><p>Format PDF, JPG, atau PNG. File yang masuk akan tampil sebagai status review.</p><button class="primary-button" type="submit">Upload Dokumen</button></form></section><section class="panel table-panel"><div class="panel-head"><h2>Dokumen Saya</h2></div>` + documentsTable(vm.Documents, false) + `</section></div>`
 }
 
@@ -1209,13 +1229,34 @@ func studentPayments(vm dashboard.ViewModel) string {
 	if remaining < 0 {
 		remaining = 0
 	}
-	paymentAction := `<form method="post" action="/student/payments/proof" enctype="multipart/form-data" class="payment-proof-form mt-5"><input type="hidden" name="order_code" value="` + attr(active.Code) + `"><label>Catatan transfer manual</label><textarea name="note" rows="3" placeholder="Contoh: Transfer bank atas nama kamu, tanggal transfer"></textarea><label>Bukti transfer<input name="proof_file" type="file"></label><div class="action-grid mt-5"><a class="outline-button" href="/student/payments/` + attr(active.Code) + `/invoice.pdf">Download Invoice PDF</a><button class="success-button" type="submit">Kirim Bukti Bayar</button></div></form>`
+	paymentAction := `<form method="post" action="/student/payments/proof" enctype="multipart/form-data" class="payment-proof-form mt-5"><input type="hidden" name="order_code" value="` + attr(active.Code) + `"><label>Jumlah ditransfer (IDR)<input name="amount" type="number" min="1" required placeholder="Contoh: 2000000"></label><label>Catatan transfer manual</label><textarea name="note" rows="3" placeholder="Contoh: Transfer bank atas nama kamu, tanggal transfer"></textarea><label>Bukti transfer<input name="proof_file" type="file"></label><div class="action-grid mt-5"><a class="outline-button" href="/student/payments/` + attr(active.Code) + `/invoice.pdf">Download Invoice PDF</a><button class="success-button" type="submit">Kirim Bukti Bayar</button></div></form>`
 	if remaining == 0 || active.Status == dashboard.OrderPaid {
 		paymentAction = `<div class="student-onboarding compact"><strong>Pembayaran sudah lunas</strong><span>Invoice ini sudah tercatat lunas di sistem.</span><a href="/student/payments/` + attr(active.Code) + `/invoice.pdf">Download Invoice PDF</a></div>`
 	} else if active.Status == dashboard.OrderWaitingVerification {
-		paymentAction = `<div class="student-onboarding compact"><strong>Bukti bayar sedang diverifikasi</strong><span>Tim akan memperbarui status setelah pembayaran cocok dengan kode pesanan.</span><a href="/student/payments/` + attr(active.Code) + `/invoice.pdf">Download Invoice PDF</a></div>` + paymentAction
+		paymentAction = `<div class="student-onboarding compact"><strong>Cicilan sedang diverifikasi</strong><span>Tim akan memperbarui status setelah cicilan yang kamu kirim dicek.</span><a href="/student/payments/` + attr(active.Code) + `/invoice.pdf">Download Invoice PDF</a></div>` + paymentAction
 	}
-	return `<div class="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]"><aside class="panel"><h2 class="mb-4 text-base font-semibold">Daftar Invoice</h2><div class="invoice-list">` + invoiceList.String() + `</div></aside><section class="panel"><div class="invoice-head"><div><p>Detail Invoice</p><strong>` + esc(active.Code) + `</strong></div><strong class="text-2xl">` + money(active.Total) + `</strong></div><dl class="detail-grid"><div><dt>Client</dt><dd>` + esc(active.ClientName) + `</dd></div><div><dt>Paket</dt><dd>` + esc(active.PackageName) + `</dd></div><div><dt>Status</dt><dd><span class="status ` + orderStatusClass(active.Status) + `">` + esc(orderStatusLabel(active.Status)) + `</span></dd></div><div><dt>Jatuh Tempo</dt><dd>` + esc(dateLabel(active.DueDate)) + `</dd></div></dl><div class="invoice-box"><h3>Rincian</h3><div><span>Subtotal</span><strong>` + money(active.Total) + `</strong></div><div><span>Sudah Dibayar</span><strong>` + money(active.Paid) + `</strong></div><div class="total"><span>Sisa</span><strong>` + money(remaining) + `</strong></div></div>` + paymentAction + `</section></div>`
+
+	var paymentRows strings.Builder
+	for _, payment := range vm.OrderPayments {
+		if payment.OrderID != active.ID {
+			continue
+		}
+		note := payment.Note
+		if note == "" {
+			note = "-"
+		}
+		proofCell := "-"
+		if payment.ProofStoragePath != "" {
+			proofCell = `<a href="/payments/` + attr(payment.ID) + `/proof" target="_blank" rel="noopener">Lihat</a>`
+		}
+		paymentRows.WriteString(`<tr><td>` + esc(dateLabel(payment.SubmittedAt)) + `<span class="block text-xs text-slate-500">` + esc(note) + `</span></td><td>` + money(payment.Amount) + `</td><td><span class="status ` + paymentStatusClass(payment.Status) + `">` + paymentStatusLabel(payment.Status) + `</span></td><td>` + proofCell + `</td></tr>`)
+	}
+	if paymentRows.Len() == 0 {
+		paymentRows.WriteString(`<tr><td colspan="4">Belum ada cicilan.</td></tr>`)
+	}
+	paymentsTable := `<div class="invoice-box"><h3>Riwayat Cicilan</h3><table class="data-table mt-3"><thead><tr><th>Tanggal &amp; Catatan</th><th>Jumlah</th><th>Status</th><th>Bukti</th></tr></thead><tbody>` + paymentRows.String() + `</tbody></table></div>`
+
+	return `<div class="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]"><aside class="panel"><h2 class="mb-4 text-base font-semibold">Daftar Invoice</h2><div class="invoice-list">` + invoiceList.String() + `</div></aside><section class="panel"><div class="invoice-head"><div><p>Detail Invoice</p><strong>` + esc(active.Code) + `</strong></div><strong class="text-2xl">` + money(active.Total) + `</strong></div><dl class="detail-grid"><div><dt>Client</dt><dd>` + esc(active.ClientName) + `</dd></div><div><dt>Paket</dt><dd>` + esc(active.PackageName) + `</dd></div><div><dt>Status</dt><dd><span class="status ` + orderStatusClass(active.Status) + `">` + esc(orderStatusLabel(active.Status)) + `</span></dd></div><div><dt>Jatuh Tempo</dt><dd>` + esc(dateLabel(active.DueDate)) + `</dd></div></dl><div class="invoice-box"><h3>Rincian</h3><div><span>Subtotal</span><strong>` + money(active.Total) + `</strong></div><div><span>Sudah Dibayar</span><strong>` + money(active.Paid) + `</strong></div><div class="total"><span>Sisa</span><strong>` + money(remaining) + `</strong></div></div>` + paymentsTable + paymentAction + `</section></div>`
 }
 
 func settingsPanel(vm dashboard.ViewModel, role string, includeFinance bool) string {
@@ -1275,9 +1316,17 @@ func studentCalendar(vm dashboard.ViewModel) string {
 
 func lockedStudentAction(vm dashboard.ViewModel, label, href string) string {
 	if vm.StudentFeatureAccess {
-		return `<a class="success-button" href="` + attr(href) + `" hx-get="` + attr(href) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">` + esc(label) + `</a>`
+		return studentActionLink(label, href)
 	}
 	return `<a class="outline-button locked-action" href="/student/payments" hx-get="/student/payments" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">` + esc(label) + `</a>`
+}
+
+// studentActionLink is the always-unlocked variant of lockedStudentAction —
+// document upload isn't gated behind payment status the way chat is, so a
+// client who hasn't paid or submitted a cicilan yet can still get their
+// documents in early.
+func studentActionLink(label, href string) string {
+	return `<a class="success-button" href="` + attr(href) + `" hx-get="` + attr(href) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">` + esc(label) + `</a>`
 }
 
 func lockedStudentFeature(title, body string) string {
@@ -1398,44 +1447,113 @@ func firstSchedule(schedules []dashboard.ScheduleItem) dashboard.ScheduleItem {
 	return schedules[0]
 }
 
-func activeStage(stages []dashboard.ProgressStage) dashboard.ProgressStage {
-	for _, stage := range stages {
-		if stage.Status == dashboard.ProgressStageActive {
-			return stage
-		}
-	}
-	if len(stages) > 0 {
-		return stages[0]
-	}
-	return dashboard.ProgressStage{Title: "Belum ada tahap", Status: dashboard.ProgressStagePending}
+// stageTimelineEntry is the client-facing render shape for one pipeline
+// stage: unlike the old ProgressStage table, nothing here is stored —
+// Status and DateLabel are derived fresh every render from PipelineStages
+// (the owner's "Kelola Tahap" list) plus ClientStageHistory, so the client
+// timeline can never drift out of sync with the owner's Pipeline board the
+// way progress_stages used to.
+type stageTimelineEntry struct {
+	Name      string
+	Status    string // "selesai" | "berjalan" | "belum"
+	DateLabel string // formatted completion date, or "" if not recorded
 }
 
-func countDoneStages(stages []dashboard.ProgressStage) int {
+// buildClientTimeline derives every stage's status for one client by
+// comparing its position in the shared stage order to the client's current
+// stage — done if earlier, active if it matches, pending otherwise. A
+// "selesai" stage's date is when the client left it (the entered_at of the
+// next stage they reached); it's blank for transitions that happened
+// before client_stage_history existed (see
+// ensureClientStageHistoryBackfilled), which is an honest gap rather than
+// a guessed date.
+func buildClientTimeline(stages []dashboard.PipelineStage, history []dashboard.ClientStageEvent, currentStage string) []stageTimelineEntry {
+	currentIndex := -1
+	for i, stage := range stages {
+		if stage.Name == currentStage {
+			currentIndex = i
+			break
+		}
+	}
+	entries := make([]stageTimelineEntry, 0, len(stages))
+	for i, stage := range stages {
+		entry := stageTimelineEntry{Name: stage.Name, Status: "belum"}
+		switch {
+		case currentIndex < 0:
+			// unassigned client — every stage stays "belum"
+		case i < currentIndex, i == currentIndex && i == len(stages)-1:
+			// being on the very last configured stage counts as fully
+			// done, same special case UpdateClientStage persists into
+			// clients.progress for the same reason
+			entry.Status = "selesai"
+			entry.DateLabel = nextStageEntryDate(history, stage.Name)
+		case i == currentIndex:
+			entry.Status = "berjalan"
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+// nextStageEntryDate finds when a client left stageName: the entered_at of
+// whichever history row comes right after the one for stageName.
+func nextStageEntryDate(history []dashboard.ClientStageEvent, stageName string) string {
+	for i, event := range history {
+		if event.StageName == stageName && i+1 < len(history) {
+			return dateLabel(history[i+1].EnteredAt)
+		}
+	}
+	return ""
+}
+
+func activeTimelineEntry(entries []stageTimelineEntry) stageTimelineEntry {
+	for _, entry := range entries {
+		if entry.Status == "berjalan" {
+			return entry
+		}
+	}
+	return stageTimelineEntry{Name: "Belum ada tahap", Status: "belum"}
+}
+
+func countTimelineDone(entries []stageTimelineEntry) int {
 	count := 0
-	for _, stage := range stages {
-		if stage.Status == dashboard.ProgressStageDone {
+	for _, entry := range entries {
+		if entry.Status == "selesai" {
 			count++
 		}
 	}
 	return count
 }
 
-func progressStatusLabel(status dashboard.ProgressStageStatus) string {
+// timelinePercent mirrors the persisted clients.progress formula in
+// UpdateClientStage (index/total, 100% on the last stage) so the ring %
+// shown here always agrees with what's stored — computed live from the
+// same timeline being rendered right below it, rather than trusting the
+// stored column, so the two numbers on this page can never disagree with
+// each other.
+func timelinePercent(entries []stageTimelineEntry) int {
+	if len(entries) == 0 {
+		return 0
+	}
+	return countTimelineDone(entries) * 100 / len(entries)
+}
+
+func stageTimelineLabel(status string) string {
 	switch status {
-	case dashboard.ProgressStageDone:
+	case "selesai":
 		return "Selesai"
-	case dashboard.ProgressStageActive:
-		return "Proses"
+	case "berjalan":
+		return "Sedang Berjalan"
 	default:
-		return "Belum Mulai"
+		return "Belum Dimulai"
 	}
 }
 
-func progressStatusClass(status dashboard.ProgressStageStatus) string {
+func stageTimelineClass(status string) string {
 	switch status {
-	case dashboard.ProgressStageDone:
+	case "selesai":
 		return "green"
-	case dashboard.ProgressStageActive:
+	case "berjalan":
 		return "blue"
 	default:
 		return "slate"
@@ -1880,6 +1998,28 @@ func orderStatusClass(status dashboard.OrderStatus) string {
 		return "amber"
 	default:
 		return "red"
+	}
+}
+
+func paymentStatusLabel(status dashboard.PaymentStatus) string {
+	switch status {
+	case dashboard.PaymentVerified:
+		return "Terverifikasi"
+	case dashboard.PaymentRejected:
+		return "Ditolak"
+	default:
+		return "Menunggu"
+	}
+}
+
+func paymentStatusClass(status dashboard.PaymentStatus) string {
+	switch status {
+	case dashboard.PaymentVerified:
+		return "green"
+	case dashboard.PaymentRejected:
+		return "red"
+	default:
+		return "amber"
 	}
 }
 

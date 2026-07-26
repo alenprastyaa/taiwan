@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 	"time"
 
 	"university_agency/internal/security"
@@ -91,17 +90,13 @@ func (r *SQLRepository) seed(ctx context.Context) error {
 		}
 	}
 
-	stages := []ProgressStage{
-		{ID: "stage-budi-01", ClientID: "client-budi", Step: 1, Title: "Konsultasi Awal", Description: "Kebutuhan studi dan target intake dikunci.", Status: ProgressStageDone, Progress: 100, DueLabel: "Selesai", PICName: staff.Name, UpdatedAt: now.AddDate(0, -2, 0)},
-		{ID: "stage-budi-02", ClientID: "client-budi", Step: 2, Title: "Persiapan Dokumen", Description: "Dokumen identitas dan akademik dikumpulkan.", Status: ProgressStageActive, Progress: 60, DueLabel: "28 Mei 2026", PICName: staff.Name, UpdatedAt: now.AddDate(0, 0, -2)},
-		{ID: "stage-budi-03", ClientID: "client-budi", Step: 3, Title: "Translate & Legalisir", Description: "Dokumen diterjemahkan dan dilegalisir.", Status: ProgressStagePending, Progress: 0, DueLabel: "-", PICName: staff.Name, UpdatedAt: now.AddDate(0, 0, -2)},
-		{ID: "stage-budi-04", ClientID: "client-budi", Step: 4, Title: "Apply Kampus", Description: "Berkas dikirim ke kampus tujuan.", Status: ProgressStagePending, Progress: 0, DueLabel: "-", PICName: staff.Name, UpdatedAt: now.AddDate(0, 0, -2)},
-		{ID: "stage-budi-05", ClientID: "client-budi", Step: 5, Title: "LOA", Description: "Menunggu hasil admission dan LOA.", Status: ProgressStagePending, Progress: 0, DueLabel: "-", PICName: staff.Name, UpdatedAt: now.AddDate(0, 0, -2)},
-		{ID: "stage-budi-06", ClientID: "client-budi", Step: 6, Title: "Visa & Keberangkatan", Description: "Visa, tiket, dan final briefing.", Status: ProgressStagePending, Progress: 0, DueLabel: "-", PICName: staff.Name, UpdatedAt: now.AddDate(0, 0, -2)},
+	stageHistory := []ClientStageEvent{
+		{ID: "stagehist-budi-01", ClientID: "client-budi", StageName: "Konsultasi", EnteredAt: now.AddDate(0, -2, 0)},
+		{ID: "stagehist-budi-02", ClientID: "client-budi", StageName: "Persiapan Dokumen", EnteredAt: now.AddDate(0, 0, -2)},
 	}
-	for _, stage := range stages {
-		if _, err := r.txExec(ctx, tx, `INSERT INTO progress_stages (id, client_id, step, title, description, status, progress, due_label, pic_name, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, stage.ID, stage.ClientID, stage.Step, stage.Title, stage.Description, stage.Status, stage.Progress, stage.DueLabel, stage.PICName, stage.UpdatedAt); err != nil {
-			return fmt.Errorf("seed progress stage %s: %w", stage.ID, err)
+	for _, event := range stageHistory {
+		if _, err := r.txExec(ctx, tx, `INSERT INTO client_stage_history (id, client_id, stage_name, entered_at) VALUES (?, ?, ?, ?)`, event.ID, event.ClientID, event.StageName, event.EnteredAt); err != nil {
+			return fmt.Errorf("seed stage history %s: %w", event.ID, err)
 		}
 	}
 
@@ -170,7 +165,7 @@ func (r *SQLRepository) ensureUsable(ctx context.Context) error {
 
 func (r *SQLRepository) seedDemoStudentDetails(ctx context.Context) error {
 	var stageCount int
-	if err := r.queryRow(ctx, `SELECT COUNT(*) FROM progress_stages WHERE client_id = ?`, "client-budi").Scan(&stageCount); err != nil {
+	if err := r.queryRow(ctx, `SELECT COUNT(*) FROM client_stage_history WHERE client_id = ?`, "client-budi").Scan(&stageCount); err != nil {
 		return err
 	}
 	var scheduleCount int
@@ -181,22 +176,14 @@ func (r *SQLRepository) seedDemoStudentDetails(ctx context.Context) error {
 		return nil
 	}
 
-	staff, err := r.firstStaff(ctx)
-	if err != nil {
-		return err
-	}
 	now := time.Now()
 	if stageCount == 0 {
-		stages := []ProgressStage{
-			{ID: newID("stage"), ClientID: "client-budi", Step: 1, Title: "Konsultasi Awal", Description: "Kebutuhan studi dan target intake dikunci.", Status: ProgressStageDone, Progress: 100, DueLabel: "Selesai", PICName: staff.Name, UpdatedAt: now.AddDate(0, -2, 0)},
-			{ID: newID("stage"), ClientID: "client-budi", Step: 2, Title: "Persiapan Dokumen", Description: "Dokumen identitas dan akademik dikumpulkan.", Status: ProgressStageActive, Progress: 60, DueLabel: "28 Mei 2026", PICName: staff.Name, UpdatedAt: now.AddDate(0, 0, -2)},
-			{ID: newID("stage"), ClientID: "client-budi", Step: 3, Title: "Translate & Legalisir", Description: "Dokumen diterjemahkan dan dilegalisir.", Status: ProgressStagePending, Progress: 0, DueLabel: "-", PICName: staff.Name, UpdatedAt: now.AddDate(0, 0, -2)},
-			{ID: newID("stage"), ClientID: "client-budi", Step: 4, Title: "Apply Kampus", Description: "Berkas dikirim ke kampus tujuan.", Status: ProgressStagePending, Progress: 0, DueLabel: "-", PICName: staff.Name, UpdatedAt: now.AddDate(0, 0, -2)},
-			{ID: newID("stage"), ClientID: "client-budi", Step: 5, Title: "LOA", Description: "Menunggu hasil admission dan LOA.", Status: ProgressStagePending, Progress: 0, DueLabel: "-", PICName: staff.Name, UpdatedAt: now.AddDate(0, 0, -2)},
-			{ID: newID("stage"), ClientID: "client-budi", Step: 6, Title: "Visa & Keberangkatan", Description: "Visa, tiket, dan final briefing.", Status: ProgressStagePending, Progress: 0, DueLabel: "-", PICName: staff.Name, UpdatedAt: now.AddDate(0, 0, -2)},
+		stageHistory := []ClientStageEvent{
+			{ID: newID("stagehist"), ClientID: "client-budi", StageName: "Konsultasi", EnteredAt: now.AddDate(0, -2, 0)},
+			{ID: newID("stagehist"), ClientID: "client-budi", StageName: "Persiapan Dokumen", EnteredAt: now.AddDate(0, 0, -2)},
 		}
-		for _, stage := range stages {
-			if _, err := r.exec(ctx, `INSERT INTO progress_stages (id, client_id, step, title, description, status, progress, due_label, pic_name, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, stage.ID, stage.ClientID, stage.Step, stage.Title, stage.Description, stage.Status, stage.Progress, stage.DueLabel, stage.PICName, stage.UpdatedAt); err != nil {
+		for _, event := range stageHistory {
+			if _, err := r.exec(ctx, `INSERT INTO client_stage_history (id, client_id, stage_name, entered_at) VALUES (?, ?, ?, ?)`, event.ID, event.ClientID, event.StageName, event.EnteredAt); err != nil {
 				return err
 			}
 		}
@@ -211,50 +198,6 @@ func (r *SQLRepository) seedDemoStudentDetails(ctx context.Context) error {
 			if _, err := r.exec(ctx, `INSERT INTO schedules (id, client_id, title, date_label, time_label, location, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, schedule.ID, schedule.ClientID, schedule.Title, schedule.DateLabel, schedule.TimeLabel, schedule.Location, schedule.Status, schedule.CreatedAt); err != nil {
 				return err
 			}
-		}
-	}
-	return nil
-}
-
-func (r *SQLRepository) ensureStudentProgressDefaults(ctx context.Context) error {
-	rows, err := r.query(ctx, `SELECT c.id, c.progress, c.current_stage, COALESCE(s.name, ''), COUNT(ps.id) FROM clients c LEFT JOIN users s ON s.id = c.pic_staff_id LEFT JOIN progress_stages ps ON ps.client_id = c.id WHERE COALESCE(c.user_id, '') <> '' GROUP BY c.id, c.progress, c.current_stage, s.name`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	type missingClient struct {
-		id           string
-		currentStage string
-		picName      string
-	}
-	var missing []missingClient
-	for rows.Next() {
-		var item missingClient
-		var count int
-		var progress int
-		if err := rows.Scan(&item.id, &progress, &item.currentStage, &item.picName, &count); err != nil {
-			return err
-		}
-		if count == 0 {
-			missing = append(missing, item)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-
-	now := time.Now()
-	for _, item := range missing {
-		title := strings.TrimSpace(item.currentStage)
-		if title == "" {
-			title = "Registrasi akun"
-		}
-		if item.picName == "" {
-			item.picName = "-"
-		}
-		if _, err := r.exec(ctx, `INSERT INTO progress_stages (id, client_id, step, title, description, status, progress, due_label, pic_name, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, newID("stage"), item.id, 1, title, "Tahap awal client sudah tercatat di sistem.", ProgressStageActive, 0, "-", item.picName, now); err != nil {
-			return err
 		}
 	}
 	return nil

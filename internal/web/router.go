@@ -98,6 +98,7 @@ func NewRouter(deps Dependencies) http.Handler {
 		r.Post("/institutions/{contactID}/update", h.updateInstitutionContact)
 		r.Post("/institutions/{contactID}/delete", h.deleteInstitutionContact)
 		r.Post("/institutions/{contactID}/move", h.moveInstitutionContact)
+		r.Get("/payments/{paymentID}/proof", h.downloadOrderPaymentProof)
 		r.Post("/intake/save", h.saveClientIntakeForm)
 		r.Get("/owner/intake/export", h.exportClientIntakeForms)
 		r.Get("/staff/intake/export", h.exportClientIntakeForms)
@@ -115,6 +116,9 @@ func NewRouter(deps Dependencies) http.Handler {
 		r.Post("/owner/invoices/create", h.createOrder)
 		r.Post("/owner/invoices/{orderID}/update", h.updateOrder)
 		r.Post("/owner/invoices/{orderID}/delete", h.deleteOrder)
+		r.Post("/owner/invoices/{orderID}/payments/create", h.createManualInstallment)
+		r.Post("/owner/invoices/payments/{paymentID}/verify", h.verifyOrderPayment)
+		r.Post("/owner/invoices/payments/{paymentID}/reject", h.rejectOrderPayment)
 		r.Post("/logistics/create", h.createShipment)
 		r.Post("/logistics/{shipmentID}/received", h.markShipmentReceived)
 		r.Post("/owner/settings/reset-data", h.resetTestData)
@@ -364,6 +368,7 @@ func (h Handler) submitPaymentProof(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	note := r.FormValue("note")
+	amount := parseOrderAmount(r.FormValue("amount"))
 	var proofFileName, proofStoragePath string
 	if saved, err := h.saveUploadedFile(r, "proof_file", "payments"); err == nil && saved != "" {
 		proofFileName = filepath.Base(saved)
@@ -372,11 +377,11 @@ func (h Handler) submitPaymentProof(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/student/payments?notice="+url.QueryEscape("File bukti bayar tidak valid."), http.StatusSeeOther)
 		return
 	}
-	if strings.TrimSpace(note) == "" && proofStoragePath == "" {
-		http.Redirect(w, r, "/student/payments?notice="+url.QueryEscape("Catatan atau file bukti bayar wajib diisi."), http.StatusSeeOther)
+	if amount <= 0 {
+		http.Redirect(w, r, "/student/payments?notice="+url.QueryEscape("Jumlah yang ditransfer wajib diisi."), http.StatusSeeOther)
 		return
 	}
-	order, err := h.store.SubmitPaymentProof(r.Context(), currentUser(r), r.FormValue("order_code"), note, proofFileName, proofStoragePath)
+	order, err := h.store.SubmitPaymentProof(r.Context(), currentUser(r), r.FormValue("order_code"), amount, note, proofFileName, proofStoragePath)
 	if err != nil {
 		http.Redirect(w, r, "/student/payments?notice="+url.QueryEscape("Gagal mengirim bukti bayar."), http.StatusSeeOther)
 		return
@@ -390,11 +395,6 @@ func (h Handler) submitPaymentProof(w http.ResponseWriter, r *http.Request) {
 
 func (h Handler) uploadStudentDocument(w http.ResponseWriter, r *http.Request) {
 	if !h.requireSignedAgreement(w, r) {
-		return
-	}
-	allowed, err := h.store.StudentHasPaymentAccess(r.Context(), currentUser(r))
-	if err != nil || !allowed {
-		http.Redirect(w, r, "/student/payments?notice="+url.QueryEscape("Upload dokumen dibuka setelah bukti pembayaran dikirim atau invoice lunas."), http.StatusSeeOther)
 		return
 	}
 	if err := r.ParseMultipartForm(15 << 20); err != nil {
@@ -426,6 +426,24 @@ func (h Handler) downloadStudentDocument(w http.ResponseWriter, r *http.Request)
 		if document.ID == documentID && document.StoragePath != "" {
 			w.Header().Set("Content-Disposition", "attachment; filename="+strconvQuote(document.FileName))
 			http.ServeFile(w, r, document.StoragePath)
+			return
+		}
+	}
+	http.NotFound(w, r)
+}
+
+func (h Handler) downloadOrderPaymentProof(w http.ResponseWriter, r *http.Request) {
+	viewer := currentUser(r)
+	paymentID := chi.URLParam(r, "paymentID")
+	payments, err := h.store.ListAllOrderPayments(r.Context(), viewer, viewer.Role)
+	if err != nil {
+		http.Error(w, "akses ditolak", http.StatusForbidden)
+		return
+	}
+	for _, payment := range payments {
+		if payment.ID == paymentID && payment.ProofStoragePath != "" {
+			w.Header().Set("Content-Disposition", "attachment; filename="+strconvQuote(payment.ProofFileName))
+			http.ServeFile(w, r, payment.ProofStoragePath)
 			return
 		}
 	}

@@ -11,8 +11,9 @@ type Repository interface {
 	CompanySnapshot(ctx context.Context, viewer User, viewRole Role) (CompanySnapshot, error)
 	ListClients(ctx context.Context, viewer User, viewRole Role) ([]ClientProfile, error)
 	ListOrders(ctx context.Context, viewer User, viewRole Role) ([]Order, error)
+	ListAllOrderPayments(ctx context.Context, viewer User, viewRole Role) ([]OrderPayment, error)
 	ListDocuments(ctx context.Context, viewer User, viewRole Role) ([]Document, error)
-	ListProgressStages(ctx context.Context, viewer User, viewRole Role) ([]ProgressStage, error)
+	ListClientStageHistory(ctx context.Context, viewer User, clientID string) ([]ClientStageEvent, error)
 	ListSchedules(ctx context.Context, viewer User, viewRole Role) ([]ScheduleItem, error)
 	ListTasks(ctx context.Context, viewer User, viewRole Role) ([]Task, error)
 	ListExpenses(ctx context.Context, viewer User, viewRole Role) ([]Expense, error)
@@ -98,12 +99,17 @@ func (s Service) View(ctx context.Context, appName, appURL string, viewer User, 
 		if vm.Orders, err = s.repository.ListOrders(ctx, viewer, role); err != nil {
 			return ViewModel{}, fmt.Errorf("load orders: %w", err)
 		}
+		if vm.OrderPayments, err = s.repository.ListAllOrderPayments(ctx, viewer, role); err != nil {
+			return ViewModel{}, fmt.Errorf("load order payments: %w", err)
+		}
 		vm.StudentFeatureAccess = role != RoleStudent || studentFeatureAccess(vm.Orders)
 		if vm.Documents, err = s.repository.ListDocuments(ctx, viewer, role); err != nil {
 			return ViewModel{}, fmt.Errorf("load documents: %w", err)
 		}
-		if vm.ProgressStages, err = s.repository.ListProgressStages(ctx, viewer, role); err != nil {
-			return ViewModel{}, fmt.Errorf("load progress stages: %w", err)
+		if role == RoleStudent && len(vm.Clients) > 0 {
+			if vm.ClientStageHistory, err = s.repository.ListClientStageHistory(ctx, viewer, vm.Clients[0].ID); err != nil {
+				return ViewModel{}, fmt.Errorf("load client stage history: %w", err)
+			}
 		}
 		if vm.Schedules, err = s.repository.ListSchedules(ctx, viewer, role); err != nil {
 			return ViewModel{}, fmt.Errorf("load schedules: %w", err)
@@ -129,7 +135,7 @@ func (s Service) View(ctx context.Context, appName, appURL string, viewer User, 
 				}
 			}
 		}
-		if role == RoleOwner || role == RoleStaff {
+		if role == RoleOwner || role == RoleStaff || role == RoleStudent {
 			if vm.PipelineStages, err = s.repository.ListPipelineStages(ctx); err != nil {
 				return ViewModel{}, fmt.Errorf("load pipeline stages: %w", err)
 			}

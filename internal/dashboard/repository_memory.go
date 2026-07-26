@@ -28,7 +28,6 @@ type MemoryRepository struct {
 	orders        map[string]Order
 	orderByCode   map[string]string
 	documents     map[string]Document
-	stages        map[string]ProgressStage
 	schedules     map[string]ScheduleItem
 	tasks         map[string]Task
 	expenses      map[string]Expense
@@ -45,7 +44,6 @@ func NewMemoryRepository() *MemoryRepository {
 		orders:        make(map[string]Order),
 		orderByCode:   make(map[string]string),
 		documents:     make(map[string]Document),
-		stages:        make(map[string]ProgressStage),
 		schedules:     make(map[string]ScheduleItem),
 		tasks:         make(map[string]Task),
 		expenses:      make(map[string]Expense),
@@ -90,13 +88,6 @@ func (r *MemoryRepository) seed() {
 		{ID: "doc-ricky-passport", ClientID: "client-ricky", ClientName: "Ricky Pratama", Name: "Passport", Status: DocumentReview, Reviewer: staff.Name, UpdatedAt: now.Add(-5 * time.Hour)},
 	} {
 		r.documents[doc.ID] = doc
-	}
-	for _, stage := range []ProgressStage{
-		{ID: "stage-budi-1", ClientID: "client-budi", Step: 1, Title: "Konsultasi Awal", Description: "Kebutuhan studi dan target intake dikunci.", Status: ProgressStageDone, Progress: 100, DueLabel: "Selesai", PICName: staff.Name, UpdatedAt: now.AddDate(0, -2, 0)},
-		{ID: "stage-budi-2", ClientID: "client-budi", Step: 2, Title: "Persiapan Dokumen", Description: "Dokumen identitas dan akademik dikumpulkan.", Status: ProgressStageActive, Progress: 60, DueLabel: "28 Mei 2026", PICName: staff.Name, UpdatedAt: now.AddDate(0, 0, -2)},
-		{ID: "stage-budi-3", ClientID: "client-budi", Step: 3, Title: "Translate & Legalisir", Description: "Dokumen diterjemahkan dan dilegalisir.", Status: ProgressStagePending, Progress: 0, DueLabel: "-", PICName: staff.Name, UpdatedAt: now.AddDate(0, 0, -2)},
-	} {
-		r.stages[stage.ID] = stage
 	}
 	for _, schedule := range []ScheduleItem{
 		{ID: "schedule-budi-1", ClientID: "client-budi", Title: "Review Form Data Diri", DateLabel: "26 Jun 2026", TimeLabel: "10:00", Location: "Online Meeting", Status: "Terjadwal", CreatedAt: now.AddDate(0, 0, 1)},
@@ -243,18 +234,6 @@ func (r *MemoryRepository) CreateStudent(ctx context.Context, input CreateStuden
 		CreatedAt:    now,
 	}
 	r.clients[client.ID] = client
-	r.stages[fmt.Sprintf("stage-%d", r.next)] = ProgressStage{
-		ID:          fmt.Sprintf("stage-%d", r.next),
-		ClientID:    client.ID,
-		Step:        1,
-		Title:       "Registrasi akun",
-		Description: "Akun client sudah dibuat dan menunggu pemilihan paket serta jadwal konsultasi.",
-		Status:      ProgressStageActive,
-		Progress:    client.Progress,
-		DueLabel:    "-",
-		PICName:     staff.Name,
-		UpdatedAt:   now,
-	}
 
 	conversation := ChatConversation{
 		ID:         fmt.Sprintf("chat-%d", r.next),
@@ -351,22 +330,6 @@ func (r *MemoryRepository) ListDocuments(ctx context.Context, viewer User, viewR
 	}
 	sort.Slice(documents, func(i, j int) bool { return documents[i].UpdatedAt.After(documents[j].UpdatedAt) })
 	return documents, nil
-}
-
-func (r *MemoryRepository) ListProgressStages(ctx context.Context, viewer User, viewRole Role) ([]ProgressStage, error) {
-	_ = ctx
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	visible := r.visibleClientIDsLocked(viewer, viewRole)
-	stages := make([]ProgressStage, 0, len(r.stages))
-	for _, stage := range r.stages {
-		if visible[stage.ClientID] {
-			stages = append(stages, stage)
-		}
-	}
-	sort.Slice(stages, func(i, j int) bool { return stages[i].Step < stages[j].Step })
-	return stages, nil
 }
 
 func (r *MemoryRepository) ListSchedules(ctx context.Context, viewer User, viewRole Role) ([]ScheduleItem, error) {
