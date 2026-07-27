@@ -819,7 +819,8 @@ func ownerInvoices(vm dashboard.ViewModel) string {
 		if filter != "" {
 			href += "&filter=" + url.QueryEscape(filter)
 		}
-		invoiceList.WriteString(`<a` + className + ` href="` + attr(href) + `" hx-get="` + attr(href) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true"><strong>` + esc(order.ClientName) + `</strong><span>` + esc(order.Code) + ` &middot; ` + esc(orderStatusLabel(order.Status)) + `</span><strong>` + money(order.Total) + `</strong></a>`)
+		pct := orderPaymentPercent(order)
+		invoiceList.WriteString(`<a` + className + ` href="` + attr(href) + `" hx-get="` + attr(href) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true"><strong>` + esc(order.ClientName) + `</strong><span>` + esc(order.Code) + ` &middot; ` + esc(orderStatusLabel(order.Status)) + `</span><span><span class="progress-line"><i style="width:` + percentStyle(pct) + `"></i></span>` + intText(pct) + `% &middot; Sisa ` + money(orderRemaining(order)) + `</span><strong>` + money(order.Total) + `</strong></a>`)
 	}
 	if invoiceList.Len() == 0 {
 		invoiceList.WriteString(`<p class="empty-note">Tidak ada invoice pada filter ini.</p>`)
@@ -1255,8 +1256,10 @@ func studentPayments(vm dashboard.ViewModel) string {
 		paymentRows.WriteString(`<tr><td colspan="4">Belum ada cicilan.</td></tr>`)
 	}
 	paymentsTable := `<div class="invoice-box"><h3>Riwayat Cicilan</h3><table class="data-table mt-3"><thead><tr><th>Tanggal &amp; Catatan</th><th>Jumlah</th><th>Status</th><th>Bukti</th></tr></thead><tbody>` + paymentRows.String() + `</tbody></table></div>`
+	paidPercent := orderPaymentPercent(active)
+	progressBlock := `<div class="invoice-box"><h3>Progress Pembayaran</h3><div class="stage-progress"><i style="width:` + percentStyle(paidPercent) + `"></i></div><p class="text-xs text-slate-500 mt-1">` + intText(paidPercent) + `% dari total tagihan sudah dibayar</p></div>`
 
-	return `<div class="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]"><aside class="panel"><h2 class="mb-4 text-base font-semibold">Daftar Invoice</h2><div class="invoice-list">` + invoiceList.String() + `</div></aside><section class="panel"><div class="invoice-head"><div><p>Detail Invoice</p><strong>` + esc(active.Code) + `</strong></div><strong class="text-2xl">` + money(active.Total) + `</strong></div><dl class="detail-grid"><div><dt>Client</dt><dd>` + esc(active.ClientName) + `</dd></div><div><dt>Paket</dt><dd>` + esc(active.PackageName) + `</dd></div><div><dt>Status</dt><dd><span class="status ` + orderStatusClass(active.Status) + `">` + esc(orderStatusLabel(active.Status)) + `</span></dd></div><div><dt>Jatuh Tempo</dt><dd>` + esc(dateLabel(active.DueDate)) + `</dd></div></dl><div class="invoice-box"><h3>Rincian</h3><div><span>Subtotal</span><strong>` + money(active.Total) + `</strong></div><div><span>Sudah Dibayar</span><strong>` + money(active.Paid) + `</strong></div><div class="total"><span>Sisa</span><strong>` + money(remaining) + `</strong></div></div>` + paymentsTable + paymentAction + `</section></div>`
+	return `<div class="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]"><aside class="panel"><h2 class="mb-4 text-base font-semibold">Daftar Invoice</h2><div class="invoice-list">` + invoiceList.String() + `</div></aside><section class="panel"><div class="invoice-head"><div><p>Detail Invoice</p><strong>` + esc(active.Code) + `</strong></div><strong class="text-2xl">` + money(active.Total) + `</strong></div>` + progressBlock + `<dl class="detail-grid"><div><dt>Client</dt><dd>` + esc(active.ClientName) + `</dd></div><div><dt>Paket</dt><dd>` + esc(active.PackageName) + `</dd></div><div><dt>Status</dt><dd><span class="status ` + orderStatusClass(active.Status) + `">` + esc(orderStatusLabel(active.Status)) + `</span></dd></div><div><dt>Jatuh Tempo</dt><dd>` + esc(dateLabel(active.DueDate)) + `</dd></div></dl><div class="invoice-box"><h3>Rincian</h3><div><span>Subtotal</span><strong>` + money(active.Total) + `</strong></div><div><span>Sudah Dibayar</span><strong>` + money(active.Paid) + `</strong></div><div class="total"><span>Sisa</span><strong>` + money(remaining) + `</strong></div></div>` + paymentsTable + paymentAction + `</section></div>`
 }
 
 func settingsPanel(vm dashboard.ViewModel, role string, includeFinance bool) string {
@@ -1977,6 +1980,21 @@ func timeAgoLabel(value time.Time) string {
 	default:
 		return dateLabel(value)
 	}
+}
+
+func orderPaymentPercent(order dashboard.Order) int {
+	if order.Total <= 0 {
+		return 0
+	}
+	return int(order.Paid * 100 / order.Total)
+}
+
+func orderRemaining(order dashboard.Order) int64 {
+	remaining := order.Total - order.Paid
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
 }
 
 func orderStatusLabel(status dashboard.OrderStatus) string {
