@@ -189,8 +189,6 @@ func ownerContent(vm dashboard.ViewModel) string {
 		return ownerServices(vm)
 	case dashboard.SectionInvoices:
 		return ownerInvoices(vm)
-	case dashboard.SectionReports:
-		return ownerReports(vm)
 	case dashboard.SectionTemplates:
 		return templatesPanel(vm)
 	case dashboard.SectionInstitutions:
@@ -218,6 +216,8 @@ func staffContent(vm dashboard.ViewModel) string {
 		return staffClients(vm)
 	case dashboard.SectionPipeline:
 		return staffPipeline(vm)
+	case dashboard.SectionServices:
+		return ownerServices(vm)
 	case dashboard.SectionTasks:
 		return staffTasks(vm)
 	case dashboard.SectionDocuments:
@@ -475,7 +475,21 @@ func clientsPanel(vm dashboard.ViewModel, includeStaffFilter bool) string {
 	if vm.EditClientID != "" {
 		return clientEditPanel(vm, path)
 	}
-	clients := filterClients(vm.Clients, vm.FilterStatus, vm.FilterPackage, vm.FilterPIC, vm.FilterSearch)
+	// Client list defaults to the active roster; ShowArchivedClients flips it
+	// to deactivated clients so "Nonaktifkan" has somewhere to lead back to
+	// (an "Aktifkan" button) instead of dropping the client out of view for
+	// good.
+	roster := activeClientProfiles(vm.Clients)
+	heading := "Data Client"
+	emptyNote := "Belum ada client aktif yang cocok dengan filter ini."
+	archiveLink := `<a class="outline-button" href="` + attr(path) + `?archived=1" hx-get="` + attr(path) + `?archived=1" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Client Nonaktif</a>`
+	if vm.ShowArchivedClients {
+		roster = inactiveClientProfiles(vm.Clients)
+		heading = "Client Nonaktif"
+		emptyNote = "Belum ada client nonaktif."
+		archiveLink = `<a class="outline-button" href="` + attr(path) + `" hx-get="` + attr(path) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Client Aktif</a>`
+	}
+	clients := filterClients(roster, vm.FilterStatus, vm.FilterPackage, vm.FilterPIC, vm.FilterSearch)
 
 	selectField := func(name, label string, options []string, selected string) string {
 		var opts strings.Builder
@@ -490,65 +504,67 @@ func clientsPanel(vm dashboard.ViewModel, includeStaffFilter bool) string {
 		return `<select name="` + name + `" aria-label="` + attr(label) + `">` + opts.String() + `</select>`
 	}
 
-	filterFields := selectField("package", "Semua Paket", distinctClientValues(vm.Clients, func(c dashboard.ClientProfile) string { return c.PackageName }), vm.FilterPackage)
-	filterFields += selectField("status", "Semua Status", distinctClientValues(vm.Clients, func(c dashboard.ClientProfile) string { return c.Status }), vm.FilterStatus)
+	filterFields := selectField("package", "Semua Paket", distinctClientValues(roster, func(c dashboard.ClientProfile) string { return c.PackageName }), vm.FilterPackage)
+	filterFields += selectField("status", "Semua Status", distinctClientValues(roster, func(c dashboard.ClientProfile) string { return c.Status }), vm.FilterStatus)
 	if includeStaffFilter {
-		filterFields += selectField("pic", "Semua Staff", distinctClientValues(vm.Clients, func(c dashboard.ClientProfile) string { return c.PICName }), vm.FilterPIC)
+		filterFields += selectField("pic", "Semua Staff", distinctClientValues(roster, func(c dashboard.ClientProfile) string { return c.PICName }), vm.FilterPIC)
 	}
 
+	orderSummaries := summarizeClientOrders(vm.Orders)
 	var rows strings.Builder
 	for i, client := range clients {
-		resetConfirm := "Reset password " + client.Name + "? Password baru akan digenerate dan ditampilkan sekali."
 		editHref := path + "?edit=" + attr(client.ID)
-		activeBadge := `<span class="status green">Aktif</span>`
 		toggleAction := ""
 		deleteAction := ""
-		if !client.Active {
-			activeBadge = `<span class="status red">Nonaktif</span>`
+		resetAction := ""
+		// Reset Password/Nonaktifkan only apply to clients with a login
+		// account — a simple-service client (UserID == "") never had one.
+		if client.UserID != "" {
+			resetConfirm := "Reset password " + client.Name + "? Password baru akan digenerate dan ditampilkan sekali."
+			resetAction = ` <form method="post" action="/` + attr(vm.Role.String()) + `/clients/` + attr(client.ID) + `/reset-password" class="inline-form" data-confirm="` + attr(resetConfirm) + `"><button type="submit" class="icon-action">Reset Password</button></form>`
+			if vm.Role == dashboard.RoleOwner {
+				toggleLabel := "Nonaktifkan"
+				toggleConfirm := "Nonaktifkan akses login " + client.Name + "? Data client tetap tersimpan, hanya login yang diblokir."
+				if !client.Active {
+					toggleLabel = "Aktifkan"
+					toggleConfirm = "Aktifkan kembali akses login " + client.Name + "?"
+				}
+				toggleAction = ` <form method="post" action="` + attr(path) + `/` + attr(client.ID) + `/toggle-active" class="inline-form" data-confirm="` + attr(toggleConfirm) + `"><button type="submit" class="icon-action">` + toggleLabel + `</button></form>`
+			}
 		}
 		if vm.Role == dashboard.RoleOwner {
-			toggleLabel := "Nonaktifkan"
-			toggleConfirm := "Nonaktifkan akses login " + client.Name + "? Data client tetap tersimpan, hanya login yang diblokir."
-			if !client.Active {
-				toggleLabel = "Aktifkan"
-				toggleConfirm = "Aktifkan kembali akses login " + client.Name + "?"
-			}
-			toggleAction = ` <form method="post" action="` + attr(path) + `/` + attr(client.ID) + `/toggle-active" class="inline-form" data-confirm="` + attr(toggleConfirm) + `"><button type="submit" class="icon-action">` + toggleLabel + `</button></form>`
 			deleteConfirm := "Hapus permanen client " + client.Name + "? Hanya bisa jika belum ada order, dokumen, task, expense, shipment, atau jadwal. Tindakan ini tidak bisa dibatalkan."
 			deleteAction = ` <form method="post" action="` + attr(path) + `/` + attr(client.ID) + `/delete" class="inline-form" data-confirm="` + attr(deleteConfirm) + `"><button type="submit" class="icon-action icon-action-danger">Hapus</button></form>`
 		}
-		rows.WriteString(`<tr><td>` + intText(i+1) + `</td><td><strong>` + esc(client.Name) + `</strong><span>` + esc(client.Email) + `</span></td><td>` + esc(client.PackageName) + `</td><td>` + esc(client.PICName) + `</td><td>` + activeBadge + ` ` + esc(client.Status) + `</td><td><span class="progress-line"><i style="width:` + percentStyle(client.Progress) + `"></i></span>` + intText(client.Progress) + `%</td><td>` + esc(client.LastSchedule) + `</td><td><a class="icon-action" href="` + attr(editHref) + `" hx-get="` + attr(editHref) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Edit</a> <a class="icon-action" href="/` + attr(vm.Role.String()) + `/chat" hx-get="/` + attr(vm.Role.String()) + `/chat" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Chat</a> <a class="icon-action" href="/` + attr(vm.Role.String()) + `/clients/` + attr(client.ID) + `/agreement.pdf">Perjanjian</a> <form method="post" action="/` + attr(vm.Role.String()) + `/clients/` + attr(client.ID) + `/reset-password" class="inline-form" data-confirm="` + attr(resetConfirm) + `"><button type="submit" class="icon-action">Reset Password</button></form>` + toggleAction + deleteAction + `</td></tr>`)
+		summary := orderSummaries[client.ID]
+		billing := `<span class="status slate">Belum ada order</span>`
+		if summary.count > 0 {
+			billing = `<span class="status ` + orderStatusClass(summary.status) + `">` + esc(orderStatusLabel(summary.status)) + `</span>`
+		}
+		sisa := summary.total - summary.paid
+		if sisa < 0 {
+			sisa = 0
+		}
+		agreementAction := ""
+		if client.UserID != "" {
+			agreementAction = ` <a class="icon-action" href="/` + attr(vm.Role.String()) + `/clients/` + attr(client.ID) + `/agreement.pdf">Perjanjian</a>`
+		}
+		activeBadge := `<span class="status green">Aktif</span>`
+		if !client.Active {
+			activeBadge = `<span class="status red">Nonaktif</span>`
+		}
+		rows.WriteString(`<tr><td>` + intText(i+1) + `</td><td><strong>` + esc(client.Name) + `</strong><span>` + esc(client.Email) + `</span></td><td>` + esc(client.PackageName) + `</td><td>` + esc(client.PICName) + `</td><td>` + activeBadge + ` ` + esc(client.Status) + `</td><td><span class="progress-line"><i style="width:` + percentStyle(client.Progress) + `"></i></span>` + intText(client.Progress) + `%</td><td>` + money(summary.total) + `</td><td>` + money(summary.paid) + `</td><td>` + money(sisa) + `</td><td>` + billing + `</td><td>` + esc(client.LastSchedule) + `</td><td><a class="icon-action" href="` + attr(editHref) + `" hx-get="` + attr(editHref) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Edit</a> <a class="icon-action" href="/` + attr(vm.Role.String()) + `/chat" hx-get="/` + attr(vm.Role.String()) + `/chat" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Chat</a>` + agreementAction + resetAction + toggleAction + deleteAction + `</td></tr>`)
 	}
 	if rows.Len() == 0 {
-		rows.WriteString(`<tr><td colspan="8">Belum ada client yang cocok dengan filter ini.</td></tr>`)
-	}
-	addModal := ""
-	if vm.ShowCreateForm {
-		var packageOptions strings.Builder
-		for _, pkg := range vm.ServicePackages {
-			packageOptions.WriteString(`<option value="` + attr(pkg.Name) + `">` + esc(pkg.Name) + `</option>`)
-		}
-		var staffOptions strings.Builder
-		for _, staff := range vm.Staff {
-			staffOptions.WriteString(`<option value="` + attr(staff.ID) + `">` + esc(staff.Name) + `</option>`)
-		}
-		invoiceFields := ""
-		if vm.Role == dashboard.RoleOwner {
-			invoiceFields = `<label>Total Tagihan (IDR)<input name="invoice_total" type="number" min="0" placeholder="7500000" data-order-total></label><label>Uang Masuk (IDR)<input name="amount_paid" type="number" min="0" placeholder="0" data-order-paid></label><label class="span-2">Kekurangan (IDR)<input type="text" readonly tabindex="-1" data-order-remaining value="0"></label>`
-		}
-		addModal = `<div class="modal-overlay"><div class="modal-card modal-card-wide">
-  <div class="panel-head"><h3>Tambah Client</h3><a class="outline-button" href="` + attr(path) + `" hx-get="` + attr(path) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Batal</a></div>
-  <form method="post" action="` + attr(path) + `/create" class="student-upload-form modal-form-grid" autocomplete="off"><label>Nama Lengkap<input name="name" required placeholder="Nama client" autocomplete="off"></label><label>Username<input name="username" required placeholder="Untuk login client" autocomplete="off"></label><label>Password<input name="password" type="password" minlength="8" required placeholder="Minimal 8 karakter" autocomplete="new-password"></label><label>Email<input name="email" type="email" placeholder="client@email.com" autocomplete="off"></label><label>No. WhatsApp<input name="phone" placeholder="08xxxxxxxxxx"></label><label>Paket<select name="package_name"><option value="">Belum dipilih</option>` + packageOptions.String() + `</select></label><label>Negara<input name="country" placeholder="Taiwan"></label><label>Kampus<input name="campus" placeholder="Nama kampus"></label><label>PIC Staff<select name="pic_staff_id"><option value="">Otomatis</option>` + staffOptions.String() + `</select></label>` + invoiceFields + `<div class="span-2 package-edit-actions"><button class="primary-button" type="submit">Simpan Client</button></div></form>
-</div></div>`
+		rows.WriteString(`<tr><td colspan="12">` + emptyNote + `</td></tr>`)
 	}
 	return `
 <div class="panel table-panel">
-  <div class="panel-head"><h2>Data Client</h2>` + toggleFormButton(vm.ShowCreateForm, "+ Tambah Client", path) + `</div>
-  ` + addModal + `
+  <div class="panel-head"><h2>` + heading + `</h2>` + archiveLink + `</div>
   <form method="get" action="` + attr(path) + `" hx-get="` + attr(path) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true" class="toolbar-row mb-4"><label class="search-box wide">` + toolIconHTML("search") + `<input type="search" name="q" value="` + attr(vm.FilterSearch) + `" placeholder="Cari nama atau email" aria-label="Cari client"></label><div class="filter-group">` + filterFields + `<button class="outline-button" type="submit">Terapkan</button><a class="outline-button" href="` + attr(path) + `" hx-get="` + attr(path) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Reset</a><a class="primary-button" href="` + attr(path) + `/export">Export</a></div></form>
-  <table class="data-table"><thead><tr><th>No.</th><th>Nama Klien</th><th>Paket / Layanan</th><th>PIC</th><th>Status Terakhir</th><th>Progress</th><th>Jadwal Terakhir</th><th>Aksi</th></tr></thead><tbody>
+  <table class="data-table"><thead><tr><th>No.</th><th>Nama Klien</th><th>Paket / Layanan</th><th>PIC</th><th>Status Terakhir</th><th>Progress</th><th>Total Tagihan</th><th>Sudah Dibayar</th><th>Sisa</th><th>Status Pembayaran</th><th>Jadwal Terakhir</th><th>Aksi</th></tr></thead><tbody>
   ` + rows.String() + `</tbody></table>
-  <div class="pagination"><span>Menampilkan ` + intText(len(clients)) + ` dari ` + intText(len(vm.Clients)) + ` data</span><div><button disabled>&lt;</button><button class="active">1</button><button disabled>&gt;</button></div></div>
+  <div class="pagination"><span>Menampilkan ` + intText(len(clients)) + ` dari ` + intText(len(roster)) + ` data</span><div><button disabled>&lt;</button><button class="active">1</button><button disabled>&gt;</button></div></div>
 </div>`
 }
 
@@ -624,6 +640,67 @@ func distinctClientValues(clients []dashboard.ClientProfile, selector func(dashb
 	return values
 }
 
+// activeClientProfiles narrows the Client page down to clients whose login
+// (or, for account-less service clients, whose record) is still active —
+// deactivated clients are archived out of the working list, matching how
+// the page is meant to read as the current active roster, not a full log.
+func activeClientProfiles(clients []dashboard.ClientProfile) []dashboard.ClientProfile {
+	active := make([]dashboard.ClientProfile, 0, len(clients))
+	for _, client := range clients {
+		if client.Active {
+			active = append(active, client)
+		}
+	}
+	return active
+}
+
+// inactiveClientProfiles is activeClientProfiles' complement — the archive
+// view a deactivated client falls into so "Nonaktifkan" has a matching
+// "Aktifkan" to come back from, instead of just vanishing from the page.
+func inactiveClientProfiles(clients []dashboard.ClientProfile) []dashboard.ClientProfile {
+	inactive := make([]dashboard.ClientProfile, 0, len(clients))
+	for _, client := range clients {
+		if !client.Active {
+			inactive = append(inactive, client)
+		}
+	}
+	return inactive
+}
+
+// clientOrderSummary aggregates every order a client has into one billing
+// line for the Client table: total billed, total paid, how many orders,
+// and a worst-case status (unpaid outranks waiting-verification outranks
+// paid) so a single client with several orders still gets one clear signal.
+type clientOrderTotals struct {
+	total  int64
+	paid   int64
+	count  int
+	status dashboard.OrderStatus
+}
+
+// summarizeClientOrders does one pass over every order to build a per-client
+// billing summary, instead of the Client table rescanning the full orders
+// slice once per row (O(clients × orders) on a page that used to be O(clients)).
+func summarizeClientOrders(orders []dashboard.Order) map[string]clientOrderTotals {
+	summaries := make(map[string]clientOrderTotals, len(orders))
+	for _, order := range orders {
+		s := summaries[order.ClientID]
+		s.count++
+		s.total += order.Total
+		s.paid += order.Paid
+		switch {
+		case s.count == 1:
+			s.status = order.Status
+		case order.Status == dashboard.OrderUnpaid:
+			s.status = dashboard.OrderUnpaid
+		case order.Status == dashboard.OrderWaitingVerification && s.status != dashboard.OrderUnpaid:
+			s.status = dashboard.OrderWaitingVerification
+		}
+		summaries[order.ClientID] = s
+	}
+	return summaries
+}
+
 func filterClients(clients []dashboard.ClientProfile, status, packageName, pic, search string) []dashboard.ClientProfile {
 	search = strings.ToLower(strings.TrimSpace(search))
 	filtered := make([]dashboard.ClientProfile, 0, len(clients))
@@ -645,32 +722,83 @@ func filterClients(clients []dashboard.ClientProfile, status, packageName, pic, 
 	return filtered
 }
 
+// clientCreateModal renders the "Tambah Client" form. It's only reachable
+// from a specific service card on the Paket & Layanan page now, so the
+// package is fixed (not a dropdown the admin can second-guess) and the
+// account fields (username/password) only appear when that package's
+// RequiresAccount is true — a simple service like document legalization
+// never creates a student login.
+func clientCreateModal(vm dashboard.ViewModel, basePath, cancelPath, packageName string) string {
+	requiresAccount := true
+	packageLabel := "Belum dipilih — pilih paket dari halaman Paket & Layanan"
+	for _, pkg := range vm.ServicePackages {
+		if pkg.Name == packageName {
+			requiresAccount = pkg.RequiresAccount
+			packageLabel = pkg.Name
+			break
+		}
+	}
+	var staffOptions strings.Builder
+	for _, staff := range vm.Staff {
+		staffOptions.WriteString(`<option value="` + attr(staff.ID) + `">` + esc(staff.Name) + `</option>`)
+	}
+	invoiceFields := ""
+	if vm.Role == dashboard.RoleOwner {
+		invoiceFields = `<label>Total Tagihan (IDR)<input name="invoice_total" type="number" min="0" placeholder="7500000" data-order-total></label><label>Uang Masuk (IDR)<input name="amount_paid" type="number" min="0" placeholder="0" data-order-paid></label><label class="span-2">Kekurangan (IDR)<input type="text" readonly tabindex="-1" data-order-remaining value="0"></label>`
+	}
+	accountFields := `<p class="span-2 text-xs text-slate-500">Layanan ini tidak membuat akun login student — client cukup tercatat untuk order dan tagihan.</p>`
+	if requiresAccount {
+		accountFields = `<label>Username<input name="username" required placeholder="Untuk login client" autocomplete="off"></label><label>Password<input name="password" type="password" minlength="8" required placeholder="Minimal 8 karakter" autocomplete="new-password"></label>`
+	}
+	return `<div class="modal-overlay"><div class="modal-card modal-card-wide">
+  <div class="panel-head"><h3>Tambah Client</h3><a class="outline-button" href="` + attr(cancelPath) + `" hx-get="` + attr(cancelPath) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Batal</a></div>
+  <form method="post" action="` + attr(basePath) + `/create" class="student-upload-form modal-form-grid" autocomplete="off"><input type="hidden" name="package_name" value="` + attr(packageName) + `"><label class="span-2">Paket / Layanan<input type="text" value="` + attr(packageLabel) + `" disabled></label><label>Nama Lengkap<input name="name" required placeholder="Nama client" autocomplete="off"></label>` + accountFields + `<label>Email<input name="email" type="email" placeholder="client@email.com" autocomplete="off"></label><label>No. WhatsApp<input name="phone" placeholder="08xxxxxxxxxx"></label><label>Negara<input name="country" placeholder="Taiwan"></label><label>Kampus<input name="campus" placeholder="Nama kampus"></label><label>PIC Staff<select name="pic_staff_id"><option value="">Otomatis</option>` + staffOptions.String() + `</select></label>` + invoiceFields + `<div class="span-2 package-edit-actions"><button class="primary-button" type="submit">Simpan Client</button></div></form>
+</div></div>`
+}
+
 // ownerServices renders the price list from vm.ServicePackages — owner-editable
 // catalog data — instead of three hardcoded cards with made-up numbers. Client
 // counts and revenue per package are computed live from vm.Clients/vm.Orders,
 // so the stats shown are real, not decorative.
 func ownerServices(vm dashboard.ViewModel) string {
-	toggleLabel := "Kelola Paket"
-	toggleTarget := "/owner/services?manage=1"
-	if vm.ShowStageManager {
-		toggleLabel = "Tutup Pengaturan Paket"
-		toggleTarget = "/owner/services"
-	}
-	toolbar := `<div class="toolbar-row"><div><h2 class="text-lg font-semibold">Paket &amp; Layanan</h2><p class="text-sm text-slate-500">Daftar harga dikelola sendiri lewat "Kelola Paket" — bukan hardcode.</p></div><div class="toolbar-actions"><a class="outline-button" href="` + attr(toggleTarget) + `" hx-get="` + attr(toggleTarget) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">` + toolIconHTML("settings-slider") + ` ` + toggleLabel + `</a></div></div>`
+	path := "/" + vm.Role.String() + "/services"
+	toolbarActions := ""
 	managePanel := ""
-	if vm.ShowStageManager {
-		managePanel = packageManagerPanel(vm.ServicePackages)
+	if vm.Role == dashboard.RoleOwner {
+		toggleLabel := "Kelola Paket"
+		toggleTarget := path + "?manage=1"
+		if vm.ShowStageManager {
+			toggleLabel = "Tutup Pengaturan Paket"
+			toggleTarget = path
+		}
+		toolbarActions = `<div class="toolbar-actions"><a class="outline-button" href="` + attr(toggleTarget) + `" hx-get="` + attr(toggleTarget) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">` + toolIconHTML("settings-slider") + ` ` + toggleLabel + `</a></div>`
+		if vm.ShowStageManager {
+			managePanel = packageManagerPanel(vm.ServicePackages)
+		}
+	}
+	toolbar := `<div class="toolbar-row"><div><h2 class="text-lg font-semibold">Paket &amp; Layanan</h2><p class="text-sm text-slate-500">Daftar harga dikelola sendiri lewat "Kelola Paket" — bukan hardcode. Tambah client baru dimulai dari memilih layanan di bawah.</p></div>` + toolbarActions + `</div>`
+	addModal := ""
+	if vm.ShowCreateForm {
+		addModal = clientCreateModal(vm, "/"+vm.Role.String()+"/clients", path, vm.FilterPackage)
 	}
 
 	var cards strings.Builder
 	if len(vm.ServicePackages) == 0 {
-		cards.WriteString(`<p class="empty-note">Belum ada paket. Klik "Kelola Paket" untuk menambahkan.</p>`)
+		emptyNote := "Belum ada paket."
+		if vm.Role == dashboard.RoleOwner {
+			emptyNote = `Belum ada paket. Klik "Kelola Paket" untuk menambahkan.`
+		}
+		cards.WriteString(`<p class="empty-note">` + emptyNote + `</p>`)
 	}
 	for i, pkg := range vm.ServicePackages {
 		bg, text := serviceBadgeTone(i)
 		category := pkg.Category
 		if category == "" {
 			category = "Paket"
+		}
+		accountBadge := ""
+		if !pkg.RequiresAccount {
+			accountBadge = ` <span class="service-badge bg-slate-100 text-slate-600">Tanpa Akun</span>`
 		}
 		priceLabel := money(pkg.Price)
 		if pkg.PriceIsFrom {
@@ -686,10 +814,11 @@ func ownerServices(vm dashboard.ViewModel) string {
 				items.WriteString(`<li>` + esc(line) + `</li>`)
 			}
 		}
-		cards.WriteString(`<article class="panel service-card"><span class="service-badge ` + bg + ` ` + text + `">` + esc(category) + `</span><h2>` + esc(pkg.Name) + `</h2><p>` + esc(pkg.Description) + `</p><strong>` + priceLabel + `</strong><ul>` + items.String() + `</ul></article>`)
+		addClientHref := path + "?new=1&package=" + url.QueryEscape(pkg.Name)
+		cards.WriteString(`<article class="panel service-card"><span class="service-badge ` + bg + ` ` + text + `">` + esc(category) + `</span>` + accountBadge + `<h2>` + esc(pkg.Name) + `</h2><p>` + esc(pkg.Description) + `</p><strong>` + priceLabel + `</strong><ul>` + items.String() + `</ul><div class="package-edit-actions"><a class="primary-button small" href="` + attr(addClientHref) + `" hx-get="` + attr(addClientHref) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">+ Tambah Client</a></div></article>`)
 	}
 
-	return `<div class="space-y-5">` + toolbar + managePanel + `<div class="grid gap-5 xl:grid-cols-3">` + cards.String() + `</div></div>`
+	return `<div class="space-y-5">` + toolbar + managePanel + addModal + `<div class="grid gap-5 xl:grid-cols-3">` + cards.String() + `</div></div>`
 }
 
 func serviceBadgeTone(position int) (string, string) {
@@ -742,6 +871,10 @@ func packageManagerPanel(packages []dashboard.ServicePackage) string {
 		if pkg.PriceIsFrom {
 			checked = " checked"
 		}
+		accountChecked := ""
+		if pkg.RequiresAccount {
+			accountChecked = " checked"
+		}
 		confirmMsg := "Hapus paket \"" + pkg.Name + "\"? Data client/order yang sudah memakai nama paket ini tidak akan berubah."
 		rows.WriteString(`<div class="package-manager-row">`)
 		rows.WriteString(`<form method="post" action="/owner/services/` + attr(pkg.ID) + `/update" class="package-edit-form">`)
@@ -750,6 +883,7 @@ func packageManagerPanel(packages []dashboard.ServicePackage) string {
 		rows.WriteString(`<label>Kategori<input name="category" value="` + attr(pkg.Category) + `" maxlength="60" placeholder="Paket / Satuan"></label>`)
 		rows.WriteString(`<label>Harga (Rp)<input name="price" type="number" min="0" value="` + intText(int(pkg.Price)) + `" required></label>`)
 		rows.WriteString(`<label class="checkbox-label"><input type="checkbox" name="price_is_from" value="1"` + checked + `> Harga mulai dari</label>`)
+		rows.WriteString(`<label class="checkbox-label"><input type="checkbox" name="requires_account" value="1"` + accountChecked + `> Buat akun student (login) saat tambah client</label>`)
 		rows.WriteString(`</div>`)
 		rows.WriteString(`<label>Deskripsi<textarea name="description" rows="2" maxlength="300">` + esc(pkg.Description) + `</textarea></label>`)
 		rows.WriteString(`<label>Highlight (satu baris = satu poin)<textarea name="highlights" rows="2" maxlength="300">` + esc(pkg.Highlights) + `</textarea></label>`)
@@ -764,7 +898,7 @@ func packageManagerPanel(packages []dashboard.ServicePackage) string {
 	if rows.Len() == 0 {
 		rows.WriteString(`<p class="empty-note">Belum ada paket. Tambahkan paket pertama di bawah.</p>`)
 	}
-	addForm := `<form method="post" action="/owner/services/create" class="package-edit-form mt-2"><div class="package-edit-grid"><label>Nama<input name="name" required maxlength="120" placeholder="Contoh: Paket Express"></label><label>Kategori<input name="category" maxlength="60" placeholder="Paket / Satuan"></label><label>Harga (Rp)<input name="price" type="number" min="0" required placeholder="15000000"></label><label class="checkbox-label"><input type="checkbox" name="price_is_from" value="1"> Harga mulai dari</label></div><label>Deskripsi<textarea name="description" rows="2" maxlength="300" placeholder="Ringkasan paket"></textarea></label><label>Highlight (satu baris = satu poin)<textarea name="highlights" rows="2" maxlength="300" placeholder="Contoh: Prioritas review dokumen"></textarea></label><div class="package-edit-actions"><button class="primary-button" type="submit">+ Tambah Paket</button></div></form>`
+	addForm := `<form method="post" action="/owner/services/create" class="package-edit-form mt-2"><div class="package-edit-grid"><label>Nama<input name="name" required maxlength="120" placeholder="Contoh: Paket Express"></label><label>Kategori<input name="category" maxlength="60" placeholder="Paket / Satuan"></label><label>Harga (Rp)<input name="price" type="number" min="0" required placeholder="15000000"></label><label class="checkbox-label"><input type="checkbox" name="price_is_from" value="1"> Harga mulai dari</label><label class="checkbox-label"><input type="checkbox" name="requires_account" value="1" checked> Buat akun student (login) saat tambah client</label></div><label>Deskripsi<textarea name="description" rows="2" maxlength="300" placeholder="Ringkasan paket"></textarea></label><label>Highlight (satu baris = satu poin)<textarea name="highlights" rows="2" maxlength="300" placeholder="Contoh: Prioritas review dokumen"></textarea></label><div class="package-edit-actions"><button class="primary-button" type="submit">+ Tambah Paket</button></div></form>`
 	return `<div class="panel stage-manager"><h3 class="text-sm font-semibold mb-1">Kelola Paket &amp; Layanan</h3><p class="text-xs text-slate-500 mb-3">Tambah, ubah, urutkan, atau hapus paket sesuai kebutuhan bisnis kamu — tidak perlu ubah kode program.</p>` + rows.String() + addForm + `</div>`
 }
 
@@ -1021,18 +1155,6 @@ func mailtoLink(email, subject, body string) string {
 	return "mailto:" + email + "?subject=" + url.QueryEscape(subject) + "&body=" + url.QueryEscape(body)
 }
 
-func ownerReports(vm dashboard.ViewModel) string {
-	return `
-<div class="space-y-5">
-  <div class="toolbar-row"><div class="tabs"><span class="tab-active">Omzet</span><span>Profit</span><span>Pemasukan</span><span>Pengeluaran</span><span>Piutang</span></div><div class="toolbar-actions"><span class="date-pill">Tahun ` + intText(time.Now().Year()) + `</span><a class="primary-button" href="/owner/reports/export">Export</a></div></div>
-  <section class="grid gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,.8fr)]">
-    <div class="panel"><div class="panel-head"><h2>Grafik Omzet (Tahun 2026)</h2></div><div class="monthly-chart"><i class="h-20"></i><i class="h-24"></i><i class="h-32"></i><i class="h-40"></i><i class="h-48"></i><i class="h-56"></i><i class="h-40"></i><i class="h-44"></i><i class="h-36"></i><i class="h-32"></i><i class="h-28"></i><i class="h-24"></i></div><div class="month-labels"><span>Jan</span><span>Feb</span><span>Mar</span><span>Apr</span><span>Mei</span><span>Jun</span><span>Jul</span><span>Agu</span><span>Sep</span><span>Okt</span><span>Nov</span><span>Des</span></div></div>
-    <div class="panel"><div class="panel-head"><h2>Ringkasan Omzet</h2></div><div class="summary-list"><div><span>Total Omzet Lunas</span><strong>` + money(vm.Snapshot.Revenue) + `</strong></div><div><span>Total Pengeluaran</span><strong>` + money(vm.Snapshot.Expenses) + `</strong></div><div><span>Profit</span><strong>` + money(vm.Snapshot.Profit) + `</strong></div><div><span>Piutang</span><strong>` + money(unpaidAmount(vm.Orders)) + `</strong></div></div></div>
-  </section>
-  <div class="panel table-panel"><div class="panel-head"><h2>Detail Omzet</h2></div><table class="data-table"><thead><tr><th>Sumber</th><th>Jumlah Order</th><th>Omzet Lunas</th><th>Piutang</th><th>Profit</th></tr></thead><tbody><tr><td>Database saat ini</td><td>` + intText(len(vm.Orders)) + `</td><td>` + money(vm.Snapshot.Revenue) + `</td><td>` + money(unpaidAmount(vm.Orders)) + `</td><td>` + money(vm.Snapshot.Profit) + `</td></tr></tbody></table></div>
-</div>`
-}
-
 func staffDashboard(vm dashboard.ViewModel) string {
 	return `
 <div class="staff-layout">
@@ -1045,7 +1167,7 @@ func staffDashboard(vm dashboard.ViewModel) string {
   </section>
   <section class="grid gap-5 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1.6fr)_minmax(0,.85fr)]">
     <div class="panel border-0 shadow-none"><div class="panel-head"><h2>Tugas Hari Ini</h2><a href="/staff/tasks" hx-get="/staff/tasks" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Semua</a></div>` + taskListCompact(vm.Tasks) + `<a class="link-row" href="/staff/tasks" hx-get="/staff/tasks" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Semua Tugas</a></div>
-    <div class="panel border-0 shadow-none"><div class="panel-head"><h2>Pipeline Saya</h2><a href="/staff/pipeline" hx-get="/staff/pipeline" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Semua</a></div><div class="mini-kanban">` + pipelineColumns(vm) + `</div></div>
+    <div class="panel border-0 shadow-none"><div class="panel-head"><h2>Pipeline Saya</h2><a href="/staff/pipeline" hx-get="/staff/pipeline" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Semua</a></div>` + pipelineColumns(vm) + `</div>
     <div class="right-rail"><div class="panel border-0 shadow-none"><div class="panel-head"><h2>Pengingat</h2><a href="/staff/tasks" hx-get="/staff/tasks" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Semua</a></div>` + staffReminderList(vm) + `</div>` + quickSchedule(vm) + recentDocs(vm) + `</div>
   </section>
   <section class="panel border-0 shadow-none">

@@ -81,6 +81,7 @@ func NewRouter(deps Dependencies) http.Handler {
 		r.Post("/staff/clients/create", h.createClient)
 		r.Get("/owner/finance/export", h.exportFinance)
 		r.Get("/owner/reports/export", h.exportFinance)
+		r.Get("/owner/reports", h.redirectReportsToFinance)
 		r.Post("/pipeline/stages/create", h.createPipelineStage)
 		r.Post("/pipeline/stages/{stageID}/rename", h.renamePipelineStage)
 		r.Post("/pipeline/stages/{stageID}/delete", h.deletePipelineStage)
@@ -156,6 +157,17 @@ func (h Handler) clientAlias(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, target, http.StatusFound)
 }
 
+// redirectReportsToFinance keeps old "/owner/reports" bookmarks/links working
+// after the menu was removed — its content duplicated the Keuangan (Finance)
+// page, so it now points there instead of 404ing.
+func (h Handler) redirectReportsToFinance(w http.ResponseWriter, r *http.Request) {
+	target := "/owner/finance"
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	http.Redirect(w, r, target, http.StatusMovedPermanently)
+}
+
 func (h Handler) page(w http.ResponseWriter, r *http.Request) {
 	role, ok := dashboard.ParseRole(strings.ToLower(chi.URLParam(r, "role")))
 	if !ok {
@@ -190,6 +202,7 @@ func (h Handler) page(w http.ResponseWriter, r *http.Request) {
 		ClientSearch:     r.URL.Query().Get("q"),
 		ShowCreateForm:   r.URL.Query().Get("new") == "1",
 		ShowStageManager: r.URL.Query().Get("manage") == "1",
+		ShowArchived:     r.URL.Query().Get("archived") == "1",
 		FilterDate:       r.URL.Query().Get("date"),
 		EditClientID:     r.URL.Query().Get("edit"),
 	})
@@ -628,12 +641,13 @@ func (h Handler) updateClientStage(w http.ResponseWriter, r *http.Request) {
 func servicePackageInputFromForm(r *http.Request) dashboard.ServicePackageInput {
 	price, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("price")), 10, 64)
 	return dashboard.ServicePackageInput{
-		Name:        r.FormValue("name"),
-		Category:    r.FormValue("category"),
-		Description: r.FormValue("description"),
-		Price:       price,
-		PriceIsFrom: r.FormValue("price_is_from") == "1",
-		Highlights:  r.FormValue("highlights"),
+		Name:            r.FormValue("name"),
+		Category:        r.FormValue("category"),
+		Description:     r.FormValue("description"),
+		Price:           price,
+		PriceIsFrom:     r.FormValue("price_is_from") == "1",
+		Highlights:      r.FormValue("highlights"),
+		RequiresAccount: r.FormValue("requires_account") == "1",
 	}
 }
 

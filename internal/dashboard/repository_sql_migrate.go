@@ -202,9 +202,11 @@ func postgresSchema() []string {
 			price BIGINT NOT NULL DEFAULT 0,
 			price_is_from BOOLEAN NOT NULL DEFAULT FALSE,
 			highlights TEXT NOT NULL DEFAULT '',
+			requires_account BOOLEAN NOT NULL DEFAULT TRUE,
 			position INTEGER NOT NULL DEFAULT 0,
 			created_at TIMESTAMPTZ NOT NULL
 		)`,
+		`ALTER TABLE service_packages ADD COLUMN IF NOT EXISTS requires_account BOOLEAN NOT NULL DEFAULT TRUE`,
 		`CREATE TABLE IF NOT EXISTS text_templates (
 			id VARCHAR(64) PRIMARY KEY,
 			title VARCHAR(191) NOT NULL,
@@ -449,9 +451,11 @@ func mysqlSchema() []string {
 			price BIGINT NOT NULL DEFAULT 0,
 			price_is_from BOOLEAN NOT NULL DEFAULT FALSE,
 			highlights TEXT NOT NULL,
+			requires_account BOOLEAN NOT NULL DEFAULT TRUE,
 			position INT NOT NULL DEFAULT 0,
 			created_at TIMESTAMP NOT NULL
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`ALTER TABLE service_packages ADD COLUMN IF NOT EXISTS requires_account BOOLEAN NOT NULL DEFAULT TRUE`,
 		`CREATE TABLE IF NOT EXISTS text_templates (
 			id VARCHAR(64) PRIMARY KEY,
 			title VARCHAR(191) NOT NULL,

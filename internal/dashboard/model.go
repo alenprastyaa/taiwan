@@ -16,20 +16,19 @@ const (
 type Section string
 
 const (
-	SectionDashboard Section = "dashboard"
-	SectionFinance   Section = "finance"
-	SectionClients   Section = "clients"
-	SectionPipeline  Section = "pipeline"
-	SectionServices  Section = "services"
-	SectionTasks     Section = "tasks"
-	SectionDocuments Section = "documents"
-	SectionInvoices  Section = "invoices"
-	SectionCalendar  Section = "calendar"
-	SectionReports   Section = "reports"
-	SectionSettings  Section = "settings"
-	SectionProgress  Section = "progress"
-	SectionPayments  Section = "payments"
-	SectionChat      Section = "chat"
+	SectionDashboard    Section = "dashboard"
+	SectionFinance      Section = "finance"
+	SectionClients      Section = "clients"
+	SectionPipeline     Section = "pipeline"
+	SectionServices     Section = "services"
+	SectionTasks        Section = "tasks"
+	SectionDocuments    Section = "documents"
+	SectionInvoices     Section = "invoices"
+	SectionCalendar     Section = "calendar"
+	SectionSettings     Section = "settings"
+	SectionProgress     Section = "progress"
+	SectionPayments     Section = "payments"
+	SectionChat         Section = "chat"
 	SectionExpenses     Section = "expenses"
 	SectionOrders       Section = "orders"
 	SectionTemplates    Section = "templates"
@@ -120,6 +119,7 @@ type ViewModel struct {
 	FilterSearch         string
 	ShowCreateForm       bool
 	ShowStageManager     bool
+	ShowArchivedClients  bool
 }
 
 type NavItem struct {
@@ -397,17 +397,22 @@ type ServicePackage struct {
 	Price       int64
 	PriceIsFrom bool
 	Highlights  string
-	Position    int
-	CreatedAt   time.Time
+	// RequiresAccount marks whether adding a client for this package needs a
+	// full student account (username/login) or is a simple service (e.g.
+	// document legalization) that only needs a client record.
+	RequiresAccount bool
+	Position        int
+	CreatedAt       time.Time
 }
 
 type ServicePackageInput struct {
-	Name        string
-	Category    string
-	Description string
-	Price       int64
-	PriceIsFrom bool
-	Highlights  string
+	Name            string
+	RequiresAccount bool
+	Category        string
+	Description     string
+	Price           int64
+	PriceIsFrom     bool
+	Highlights      string
 }
 
 // TextTemplate is a staff/owner-managed canned reply — reusable copy-paste

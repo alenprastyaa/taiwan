@@ -155,24 +155,38 @@ func (r *SQLRepository) FindUserByID(ctx context.Context, id string) (User, erro
 	return user, nil
 }
 
+// CreateStudent adds a client, and — when Username is provided — a student
+// login account for them. Username is left blank for clients onboarded via
+// a service package that doesn't require an account (e.g. one-off document
+// legalization), where there's no student portal to log into.
 func (r *SQLRepository) CreateStudent(ctx context.Context, input CreateStudentInput) (User, error) {
+	createAccount := strings.TrimSpace(input.Username) != ""
 	username := usernameKey(input.Username)
 	name := strings.TrimSpace(input.Name)
 	email := strings.TrimSpace(input.Email)
 	phone := strings.TrimSpace(input.Phone)
-	if username == "" || len(input.Password) < 8 || name == "" {
+	if name == "" {
+		return User{}, ErrInvalidInput
+	}
+	if createAccount && (username == "" || len(input.Password) < 8) {
 		return User{}, ErrInvalidInput
 	}
 
-	if _, err := r.FindUserByUsername(ctx, username); err == nil {
-		return User{}, ErrDuplicate
-	} else if !errors.Is(err, ErrNotFound) {
-		return User{}, err
+	if createAccount {
+		if _, err := r.FindUserByUsername(ctx, username); err == nil {
+			return User{}, ErrDuplicate
+		} else if !errors.Is(err, ErrNotFound) {
+			return User{}, err
+		}
 	}
 
-	hash, err := security.HashPassword(input.Password)
-	if err != nil {
-		return User{}, err
+	var hash []byte
+	if createAccount {
+		var err error
+		hash, err = security.HashPassword(input.Password)
+		if err != nil {
+			return User{}, err
+		}
 	}
 	staff, err := r.firstStaff(ctx)
 	if err != nil {
@@ -204,23 +218,29 @@ func (r *SQLRepository) CreateStudent(ctx context.Context, input CreateStudentIn
 	defer func() { _ = tx.Rollback() }()
 
 	now := time.Now()
+	currentStage := "Registrasi akun"
+	if !createAccount {
+		currentStage = "Layanan Diterima"
+	}
 	user := User{
-		ID:           newID("user-student"),
-		Username:     username,
-		Name:         name,
-		Email:        email,
-		Phone:        phone,
-		Role:         RoleStudent,
-		PasswordHash: hash,
-		Active:       true,
-		CreatedAt:    now,
+		Name:      name,
+		Email:     email,
+		Phone:     phone,
+		Role:      RoleStudent,
+		Active:    true,
+		CreatedAt: now,
+	}
+	if createAccount {
+		user.ID = newID("user-student")
+		user.Username = username
+		user.PasswordHash = hash
 	}
 	client := ClientProfile{
 		ID:           newID("client"),
 		UserID:       user.ID,
-		Name:         user.Name,
-		Email:        user.Email,
-		Phone:        user.Phone,
+		Name:         name,
+		Email:        email,
+		Phone:        phone,
 		Country:      country,
 		Campus:       campus,
 		PackageName:  packageName,
@@ -229,7 +249,7 @@ func (r *SQLRepository) CreateStudent(ctx context.Context, input CreateStudentIn
 		Status:       "Registrasi",
 		Progress:     0,
 		LastSchedule: "-",
-		CurrentStage: "Registrasi akun",
+		CurrentStage: currentStage,
 		CreatedAt:    now,
 	}
 	conversation := ChatConversation{
@@ -239,10 +259,13 @@ func (r *SQLRepository) CreateStudent(ctx context.Context, input CreateStudentIn
 		UpdatedAt: now,
 	}
 
-	if _, err := r.txExec(ctx, tx, `INSERT INTO users (id, username, name, email, phone, role, password_hash, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, user.ID, user.Username, user.Name, user.Email, user.Phone, user.Role, user.PasswordHash, user.Active, user.CreatedAt); err != nil {
-		return User{}, err
+	if createAccount {
+		if _, err := r.txExec(ctx, tx, `INSERT INTO users (id, username, name, email, phone, role, password_hash, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, user.ID, user.Username, user.Name, user.Email, user.Phone, user.Role, user.PasswordHash, user.Active, user.CreatedAt); err != nil {
+			return User{}, err
+		}
 	}
-	if _, err := r.txExec(ctx, tx, `INSERT INTO clients (id, user_id, name, email, phone, country, campus, package_name, pic_staff_id, status, progress, last_schedule, current_stage, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, client.ID, client.UserID, client.Name, client.Email, client.Phone, client.Country, client.Campus, client.PackageName, client.PICStaffID, client.Status, client.Progress, client.LastSchedule, client.CurrentStage, client.CreatedAt); err != nil {
+	clientUserID := sql.NullString{String: client.UserID, Valid: client.UserID != ""}
+	if _, err := r.txExec(ctx, tx, `INSERT INTO clients (id, user_id, name, email, phone, country, campus, package_name, pic_staff_id, status, progress, last_schedule, current_stage, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, client.ID, clientUserID, client.Name, client.Email, client.Phone, client.Country, client.Campus, client.PackageName, client.PICStaffID, client.Status, client.Progress, client.LastSchedule, client.CurrentStage, client.CreatedAt); err != nil {
 		return User{}, err
 	}
 	if _, err := r.txExec(ctx, tx, `INSERT INTO chat_conversations (id, client_id, staff_id, last_message, updated_at) VALUES (?, ?, ?, ?, ?)`, conversation.ID, conversation.ClientID, conversation.StaffID, "", conversation.UpdatedAt); err != nil {
@@ -1800,7 +1823,7 @@ func (r *SQLRepository) ChangeOwnPassword(ctx context.Context, viewer User, curr
 }
 
 func (r *SQLRepository) ListServicePackages(ctx context.Context) ([]ServicePackage, error) {
-	rows, err := r.query(ctx, `SELECT id, name, category, description, price, price_is_from, highlights, position, created_at FROM service_packages ORDER BY position ASC`)
+	rows, err := r.query(ctx, `SELECT id, name, category, description, price, price_is_from, highlights, requires_account, position, created_at FROM service_packages ORDER BY position ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -1809,7 +1832,7 @@ func (r *SQLRepository) ListServicePackages(ctx context.Context) ([]ServicePacka
 	var packages []ServicePackage
 	for rows.Next() {
 		var pkg ServicePackage
-		if err := rows.Scan(&pkg.ID, &pkg.Name, &pkg.Category, &pkg.Description, &pkg.Price, &pkg.PriceIsFrom, &pkg.Highlights, &pkg.Position, &pkg.CreatedAt); err != nil {
+		if err := rows.Scan(&pkg.ID, &pkg.Name, &pkg.Category, &pkg.Description, &pkg.Price, &pkg.PriceIsFrom, &pkg.Highlights, &pkg.RequiresAccount, &pkg.Position, &pkg.CreatedAt); err != nil {
 			return nil, err
 		}
 		packages = append(packages, pkg)
@@ -1841,17 +1864,18 @@ func (r *SQLRepository) CreateServicePackage(ctx context.Context, viewer User, i
 		}
 	}
 	pkg := ServicePackage{
-		ID:          newID("svcpkg"),
-		Name:        strings.TrimSpace(input.Name),
-		Category:    strings.TrimSpace(input.Category),
-		Description: strings.TrimSpace(input.Description),
-		Price:       input.Price,
-		PriceIsFrom: input.PriceIsFrom,
-		Highlights:  strings.TrimSpace(input.Highlights),
-		Position:    len(existing),
-		CreatedAt:   time.Now(),
+		ID:              newID("svcpkg"),
+		Name:            strings.TrimSpace(input.Name),
+		Category:        strings.TrimSpace(input.Category),
+		Description:     strings.TrimSpace(input.Description),
+		Price:           input.Price,
+		PriceIsFrom:     input.PriceIsFrom,
+		Highlights:      strings.TrimSpace(input.Highlights),
+		RequiresAccount: input.RequiresAccount,
+		Position:        len(existing),
+		CreatedAt:       time.Now(),
 	}
-	if _, err := r.exec(ctx, `INSERT INTO service_packages (id, name, category, description, price, price_is_from, highlights, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, pkg.ID, pkg.Name, pkg.Category, pkg.Description, pkg.Price, pkg.PriceIsFrom, pkg.Highlights, pkg.Position, pkg.CreatedAt); err != nil {
+	if _, err := r.exec(ctx, `INSERT INTO service_packages (id, name, category, description, price, price_is_from, highlights, requires_account, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, pkg.ID, pkg.Name, pkg.Category, pkg.Description, pkg.Price, pkg.PriceIsFrom, pkg.Highlights, pkg.RequiresAccount, pkg.Position, pkg.CreatedAt); err != nil {
 		return ServicePackage{}, err
 	}
 	return pkg, nil
@@ -1882,11 +1906,11 @@ func (r *SQLRepository) UpdateServicePackage(ctx context.Context, viewer User, p
 		return ServicePackage{}, ErrNotFound
 	}
 	name := strings.TrimSpace(input.Name)
-	if _, err := r.exec(ctx, `UPDATE service_packages SET name = ?, category = ?, description = ?, price = ?, price_is_from = ?, highlights = ? WHERE id = ?`, name, strings.TrimSpace(input.Category), strings.TrimSpace(input.Description), input.Price, input.PriceIsFrom, strings.TrimSpace(input.Highlights), packageID); err != nil {
+	if _, err := r.exec(ctx, `UPDATE service_packages SET name = ?, category = ?, description = ?, price = ?, price_is_from = ?, highlights = ?, requires_account = ? WHERE id = ?`, name, strings.TrimSpace(input.Category), strings.TrimSpace(input.Description), input.Price, input.PriceIsFrom, strings.TrimSpace(input.Highlights), input.RequiresAccount, packageID); err != nil {
 		return ServicePackage{}, err
 	}
 	var updated ServicePackage
-	if err := r.queryRow(ctx, `SELECT id, name, category, description, price, price_is_from, highlights, position, created_at FROM service_packages WHERE id = ?`, packageID).Scan(&updated.ID, &updated.Name, &updated.Category, &updated.Description, &updated.Price, &updated.PriceIsFrom, &updated.Highlights, &updated.Position, &updated.CreatedAt); err != nil {
+	if err := r.queryRow(ctx, `SELECT id, name, category, description, price, price_is_from, highlights, requires_account, position, created_at FROM service_packages WHERE id = ?`, packageID).Scan(&updated.ID, &updated.Name, &updated.Category, &updated.Description, &updated.Price, &updated.PriceIsFrom, &updated.Highlights, &updated.RequiresAccount, &updated.Position, &updated.CreatedAt); err != nil {
 		return ServicePackage{}, err
 	}
 	return updated, nil

@@ -54,6 +54,7 @@ type ViewOptions struct {
 	ClientSearch     string
 	ShowCreateForm   bool
 	ShowStageManager bool
+	ShowArchived     bool
 	FilterDate       string
 	EditClientID     string
 }
@@ -140,12 +141,12 @@ func (s Service) View(ctx context.Context, appName, appURL string, viewer User, 
 				return ViewModel{}, fmt.Errorf("load pipeline stages: %w", err)
 			}
 		}
-		if (role == RoleOwner && (section == SectionServices || section == SectionInvoices)) || ((role == RoleOwner || role == RoleStaff) && section == SectionClients) {
+		if (role == RoleOwner && section == SectionInvoices) || ((role == RoleOwner || role == RoleStaff) && (section == SectionClients || section == SectionServices)) {
 			if vm.ServicePackages, err = s.repository.ListServicePackages(ctx); err != nil {
 				return ViewModel{}, fmt.Errorf("load service packages: %w", err)
 			}
 		}
-		if (role == RoleOwner || role == RoleStaff) && section == SectionClients {
+		if (role == RoleOwner || role == RoleStaff) && (section == SectionClients || section == SectionServices) {
 			if vm.Staff, err = s.repository.ListStaff(ctx); err != nil {
 				return ViewModel{}, fmt.Errorf("load staff: %w", err)
 			}
@@ -221,6 +222,7 @@ func (s Service) View(ctx context.Context, appName, appURL string, viewer User, 
 	vm.FilterSearch = options.ClientSearch
 	vm.ShowCreateForm = options.ShowCreateForm
 	vm.ShowStageManager = options.ShowStageManager
+	vm.ShowArchivedClients = options.ShowArchived
 	vm.FilterDate = options.FilterDate
 
 	vm.UserName = viewer.Name
@@ -292,7 +294,7 @@ func validSection(role Role, section Section) bool {
 	allowed := map[Role]map[Section]bool{
 		RoleOwner: {
 			SectionDashboard: true, SectionFinance: true, SectionClients: true, SectionPipeline: true,
-			SectionServices: true, SectionReports: true, SectionSettings: true, SectionOrders: true,
+			SectionServices: true, SectionSettings: true, SectionOrders: true,
 			SectionInvoices: true, SectionChat: true, SectionTemplates: true, SectionInstitutions: true,
 			SectionIntake: true, SectionActivity: true, SectionLogistics: true, SectionStaff: true,
 		},
@@ -300,7 +302,7 @@ func validSection(role Role, section Section) bool {
 			SectionDashboard: true, SectionClients: true, SectionPipeline: true, SectionTasks: true,
 			SectionDocuments: true, SectionExpenses: true, SectionCalendar: true, SectionChat: true,
 			SectionSettings: true, SectionTemplates: true, SectionInstitutions: true, SectionIntake: true,
-			SectionActivity: true, SectionLogistics: true,
+			SectionActivity: true, SectionLogistics: true, SectionServices: true,
 		},
 		RoleStudent: {
 			SectionDashboard: true, SectionProgress: true, SectionDocuments: true, SectionPayments: true,
@@ -316,11 +318,10 @@ func navigation(role Role, active Section) []NavItem {
 		RoleOwner: {
 			{Label: "Dashboard", Href: "/owner", Icon: "grid"},
 			{Label: "Keuangan", Href: "/owner/finance", Icon: "wallet"},
-			{Label: "Klien & Order", Href: "/owner/clients", Icon: "users"},
+			{Label: "Client", Href: "/owner/clients", Icon: "users"},
 			{Label: "Pipeline", Href: "/owner/pipeline", Icon: "kanban"},
 			{Label: "Paket & Layanan", Href: "/owner/services", Icon: "package"},
 			{Label: "Invoice", Href: "/owner/invoices", Icon: "receipt"},
-			{Label: "Laporan", Href: "/owner/reports", Icon: "chart"},
 			{Label: "Template Teks", Href: "/owner/templates", Icon: "file"},
 			{Label: "Direktori Institusi", Href: "/owner/institutions", Icon: "users"},
 			{Label: "Data Client / Formulir", Href: "/owner/intake", Icon: "file"},
@@ -334,6 +335,7 @@ func navigation(role Role, active Section) []NavItem {
 			{Label: "Dashboard", Href: "/staff", Icon: "grid"},
 			{Label: "Klien", Href: "/staff/clients", Icon: "users"},
 			{Label: "Pipeline", Href: "/staff/pipeline", Icon: "kanban"},
+			{Label: "Paket & Layanan", Href: "/staff/services", Icon: "package"},
 			{Label: "Tugas Saya", Href: "/staff/tasks", Icon: "calendar", Badge: "6"},
 			{Label: "Dokumen", Href: "/staff/documents", Icon: "file"},
 			{Label: "Pengeluaran", Href: "/staff/expenses", Icon: "wallet"},
@@ -378,12 +380,10 @@ func sectionFromHref(href string) Section {
 		return SectionClients
 	case "/owner/pipeline", "/staff/pipeline":
 		return SectionPipeline
-	case "/owner/services":
+	case "/owner/services", "/staff/services":
 		return SectionServices
 	case "/owner/invoices":
 		return SectionInvoices
-	case "/owner/reports":
-		return SectionReports
 	case "/owner/templates", "/staff/templates":
 		return SectionTemplates
 	case "/owner/institutions", "/staff/institutions":
@@ -428,15 +428,13 @@ func pageCopy(role Role, section Section) (string, string, string) {
 		case SectionFinance:
 			return "Detail Keuangan", "Ringkasan arus kas dan performa pembayaran.", "Pantau pemasukan, pengeluaran, profit, piutang, dan transaksi terbaru."
 		case SectionClients:
-			return "Daftar Klien", "Kelola semua client, PIC, paket, status, dan progress.", "Tabel operasional seluruh client dengan filter paket, status, staff, dan aksi cepat."
+			return "Client", "Daftar client aktif beserta rincian order dan tagihan.", "Tabel operasional client aktif dengan filter paket, status, staff, dan rincian pembayaran per client."
 		case SectionPipeline:
 			return "Pipeline Keseluruhan", "Pantau tahapan konsultasi sampai selesai.", "Kanban pipeline untuk melihat beban proses per tahap dan bottleneck operasional."
 		case SectionServices:
-			return "Paket & Layanan", "Konfigurasi paket profesional, basic, dan layanan satuan.", "Daftar layanan, harga, dan volume order yang dapat dikelola owner."
+			return "Paket & Layanan", "Konfigurasi paket profesional, basic, dan layanan satuan.", "Daftar layanan, harga, dan volume order yang dapat dikelola owner. Tambah client baru dimulai dari sini dengan memilih layanan."
 		case SectionInvoices:
 			return "Invoice & Pembayaran", "Pantau tagihan, sisa pembayaran, dan follow up.", "Detail invoice dengan aksi kirim WhatsApp, email, download PDF, dan tandai lunas."
-		case SectionReports:
-			return "Laporan Keuangan", "Analisis pendapatan, pengeluaran, profit, dan piutang.", "Grafik serta ringkasan bulanan untuk ekspor PDF dan Excel."
 		case SectionTemplates:
 			return "Template Teks", "Kelola template jawaban untuk pertanyaan client yang berulang.", "Simpan, ubah, dan salin teks siap pakai untuk WhatsApp atau chat client."
 		case SectionInstitutions:
@@ -460,6 +458,8 @@ func pageCopy(role Role, section Section) (string, string, string) {
 			return "Klien Saya", "Daftar client yang sedang ditangani staff.", "Update progress, cek dokumen, dan tindak lanjuti order client."
 		case SectionPipeline:
 			return "Pipeline Saya", "Fokus pada tahapan client milik staff.", "Kanban operasional untuk pekerjaan konsultasi, dokumen, visa, dan keberangkatan."
+		case SectionServices:
+			return "Paket & Layanan", "Daftar paket dan layanan yang tersedia.", "Tambah client baru dimulai dari sini dengan memilih layanan."
 		case SectionTasks:
 			return "Tugas Saya", "Task list harian berdasarkan prioritas.", "Kelola follow up dokumen, appointment, pembayaran, dan upload berkas."
 		case SectionDocuments:

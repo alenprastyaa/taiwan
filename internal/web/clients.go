@@ -38,12 +38,29 @@ func (h Handler) createClient(w http.ResponseWriter, r *http.Request) {
 		input.InvoiceTotal, _ = strconv.ParseInt(strings.TrimSpace(r.FormValue("invoice_total")), 10, 64)
 		input.AmountPaid, _ = strconv.ParseInt(strings.TrimSpace(r.FormValue("amount_paid")), 10, 64)
 	}
+	// The package decides whether this client gets a student login account,
+	// not whatever the form happened to submit — a simple service (e.g.
+	// document legalization) never creates one, even if the client somehow
+	// posts a username/password for it.
+	if packages, err := h.store.ListServicePackages(r.Context()); err == nil {
+		for _, pkg := range packages {
+			if pkg.Name == input.PackageName && !pkg.RequiresAccount {
+				input.Username = ""
+				input.Password = ""
+				break
+			}
+		}
+	}
 	user, err := h.store.CreateStudent(r.Context(), input)
 	if err != nil {
 		http.Redirect(w, r, basePath+"?new=1&notice="+url.QueryEscape("Gagal menambah client. Username harus unik dan password minimal 8 karakter."), http.StatusSeeOther)
 		return
 	}
-	http.Redirect(w, r, basePath+"?notice="+url.QueryEscape("Client "+user.Username+" berhasil ditambahkan."), http.StatusSeeOther)
+	notice := "Client " + user.Name + " berhasil ditambahkan."
+	if user.Username != "" {
+		notice = "Client " + user.Username + " berhasil ditambahkan."
+	}
+	http.Redirect(w, r, basePath+"?notice="+url.QueryEscape(notice), http.StatusSeeOther)
 }
 
 func (h Handler) updateClient(w http.ResponseWriter, r *http.Request) {
