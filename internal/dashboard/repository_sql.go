@@ -1766,6 +1766,59 @@ func (r *SQLRepository) ToggleStaffActive(ctx context.Context, viewer User, staf
 	return err
 }
 
+// DeleteStaff permanently removes a staff account. Blocked (ErrConflict) if
+// the staff still has real business records tied to them — PIC on any
+// client, tasks, expenses, or shipments — since orphaning those would
+// destroy operational history; ToggleStaffActive is the tool for that case.
+// What's safe to cascade away is incidental data (chat, activity log) that
+// only exists because the account does.
+func (r *SQLRepository) DeleteStaff(ctx context.Context, viewer User, staffID string) error {
+	if viewer.Role != RoleOwner {
+		return ErrForbidden
+	}
+	staff, err := r.findStaffAccountByID(ctx, staffID)
+	if err != nil {
+		return err
+	}
+	var clientCount int
+	if err := r.queryRow(ctx, `SELECT COUNT(*) FROM clients WHERE pic_staff_id = ?`, staff.ID).Scan(&clientCount); err != nil {
+		return err
+	}
+	if clientCount > 0 {
+		return ErrConflict
+	}
+	blockingTables := []string{"tasks", "expenses", "shipments"}
+	for _, table := range blockingTables {
+		var count int
+		if err := r.queryRow(ctx, `SELECT COUNT(*) FROM `+table+` WHERE staff_id = ?`, staff.ID).Scan(&count); err != nil {
+			return err
+		}
+		if count > 0 {
+			return ErrConflict
+		}
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := r.txExec(ctx, tx, `DELETE FROM chat_messages WHERE conversation_id IN (SELECT id FROM chat_conversations WHERE staff_id = ?)`, staff.ID); err != nil {
+		return err
+	}
+	cascadeTables := []string{"chat_conversations", "activity_log"}
+	for _, table := range cascadeTables {
+		if _, err := r.txExec(ctx, tx, `DELETE FROM `+table+` WHERE staff_id = ?`, staff.ID); err != nil {
+			return fmt.Errorf("clear %s: %w", table, err)
+		}
+	}
+	if _, err := r.txExec(ctx, tx, `DELETE FROM users WHERE id = ?`, staff.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // ResetStaffPassword mirrors ResetStudentPassword's one-time-display
 // pattern, scoped to staff accounts and owner-only.
 func (r *SQLRepository) ResetStaffPassword(ctx context.Context, viewer User, staffID string) (User, string, error) {

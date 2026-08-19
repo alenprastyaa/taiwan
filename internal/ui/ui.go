@@ -510,6 +510,11 @@ func clientsPanel(vm dashboard.ViewModel, includeStaffFilter bool) string {
 		filterFields += selectField("pic", "Semua Staff", distinctClientValues(roster, func(c dashboard.ClientProfile) string { return c.PICName }), vm.FilterPIC)
 	}
 
+	// Owner needs billing visibility on this page (that's the point of the
+	// Client menu); staff's copy stays lean — name/package/PIC/status/action
+	// only — so the table fits a laptop screen without horizontal scroll on
+	// either role.
+	showBilling := vm.Role == dashboard.RoleOwner
 	orderSummaries := summarizeClientOrders(vm.Orders)
 	var rows strings.Builder
 	for i, client := range clients {
@@ -536,15 +541,6 @@ func clientsPanel(vm dashboard.ViewModel, includeStaffFilter bool) string {
 			deleteConfirm := "Hapus permanen client " + client.Name + "? Hanya bisa jika belum ada order, dokumen, task, expense, shipment, atau jadwal. Tindakan ini tidak bisa dibatalkan."
 			deleteAction = ` <form method="post" action="` + attr(path) + `/` + attr(client.ID) + `/delete" class="inline-form" data-confirm="` + attr(deleteConfirm) + `"><button type="submit" class="icon-action icon-action-danger">Hapus</button></form>`
 		}
-		summary := orderSummaries[client.ID]
-		billing := `<span class="status slate">Belum ada order</span>`
-		if summary.count > 0 {
-			billing = `<span class="status ` + orderStatusClass(summary.status) + `">` + esc(orderStatusLabel(summary.status)) + `</span>`
-		}
-		sisa := summary.total - summary.paid
-		if sisa < 0 {
-			sisa = 0
-		}
 		agreementAction := ""
 		if client.UserID != "" {
 			agreementAction = ` <a class="icon-action" href="/` + attr(vm.Role.String()) + `/clients/` + attr(client.ID) + `/agreement.pdf">Perjanjian</a>`
@@ -553,16 +549,35 @@ func clientsPanel(vm dashboard.ViewModel, includeStaffFilter bool) string {
 		if !client.Active {
 			activeBadge = `<span class="status red">Nonaktif</span>`
 		}
-		rows.WriteString(`<tr><td>` + intText(i+1) + `</td><td><strong>` + esc(client.Name) + `</strong><span>` + esc(client.Email) + `</span></td><td>` + esc(client.PackageName) + `</td><td>` + esc(client.PICName) + `</td><td>` + activeBadge + ` ` + esc(client.Status) + `</td><td><span class="progress-line"><i style="width:` + percentStyle(client.Progress) + `"></i></span>` + intText(client.Progress) + `%</td><td>` + money(summary.total) + `</td><td>` + money(summary.paid) + `</td><td>` + money(sisa) + `</td><td>` + billing + `</td><td>` + esc(client.LastSchedule) + `</td><td><a class="icon-action" href="` + attr(editHref) + `" hx-get="` + attr(editHref) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Edit</a> <a class="icon-action" href="/` + attr(vm.Role.String()) + `/chat" hx-get="/` + attr(vm.Role.String()) + `/chat" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Chat</a>` + agreementAction + resetAction + toggleAction + deleteAction + `</td></tr>`)
+		billingCells := ""
+		if showBilling {
+			summary := orderSummaries[client.ID]
+			billing := `<span class="status slate">Belum ada order</span>`
+			if summary.count > 0 {
+				sisa := summary.total - summary.paid
+				if sisa < 0 {
+					sisa = 0
+				}
+				billing = `<div class="billing-cell"><span>Total <strong>` + money(summary.total) + `</strong></span><span>Dibayar <strong>` + money(summary.paid) + `</strong></span><span>Sisa <strong>` + money(sisa) + `</strong></span><span class="status ` + billingStatusClass(summary.status, summary.paid) + `">` + esc(billingStatusLabel(summary.status, summary.paid)) + `</span></div>`
+			}
+			billingCells = `<td><span class="progress-line"><i style="width:` + percentStyle(client.Progress) + `"></i></span>` + intText(client.Progress) + `%</td><td>` + billing + `</td>`
+		}
+		rows.WriteString(`<tr><td>` + intText(i+1) + `</td><td><strong>` + esc(client.Name) + `</strong><span>` + esc(client.Email) + `</span></td><td>` + esc(client.PackageName) + `</td><td>` + esc(client.PICName) + `</td><td>` + activeBadge + ` ` + esc(client.Status) + `</td>` + billingCells + `<td><a class="icon-action" href="` + attr(editHref) + `" hx-get="` + attr(editHref) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Edit</a> <a class="icon-action" href="/` + attr(vm.Role.String()) + `/chat" hx-get="/` + attr(vm.Role.String()) + `/chat" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Chat</a>` + agreementAction + resetAction + toggleAction + deleteAction + `</td></tr>`)
+	}
+	colCount := 6
+	headerCells := `<th>No.</th><th>Nama Klien</th><th>Paket / Layanan</th><th>PIC</th><th>Status Terakhir</th><th>Aksi</th>`
+	if showBilling {
+		colCount = 8
+		headerCells = `<th>No.</th><th>Nama Klien</th><th>Paket / Layanan</th><th>PIC</th><th>Status Terakhir</th><th>Progress</th><th>Tagihan</th><th>Aksi</th>`
 	}
 	if rows.Len() == 0 {
-		rows.WriteString(`<tr><td colspan="12">` + emptyNote + `</td></tr>`)
+		rows.WriteString(`<tr><td colspan="` + intText(colCount) + `">` + emptyNote + `</td></tr>`)
 	}
 	return `
 <div class="panel table-panel">
   <div class="panel-head"><h2>` + heading + `</h2>` + archiveLink + `</div>
   <form method="get" action="` + attr(path) + `" hx-get="` + attr(path) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true" class="toolbar-row mb-4"><label class="search-box wide">` + toolIconHTML("search") + `<input type="search" name="q" value="` + attr(vm.FilterSearch) + `" placeholder="Cari nama atau email" aria-label="Cari client"></label><div class="filter-group">` + filterFields + `<button class="outline-button" type="submit">Terapkan</button><a class="outline-button" href="` + attr(path) + `" hx-get="` + attr(path) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Reset</a><a class="primary-button" href="` + attr(path) + `/export">Export</a></div></form>
-  <table class="data-table"><thead><tr><th>No.</th><th>Nama Klien</th><th>Paket / Layanan</th><th>PIC</th><th>Status Terakhir</th><th>Progress</th><th>Total Tagihan</th><th>Sudah Dibayar</th><th>Sisa</th><th>Status Pembayaran</th><th>Jadwal Terakhir</th><th>Aksi</th></tr></thead><tbody>
+  <table class="data-table"><thead><tr>` + headerCells + `</tr></thead><tbody>
   ` + rows.String() + `</tbody></table>
   <div class="pagination"><span>Menampilkan ` + intText(len(clients)) + ` dari ` + intText(len(roster)) + ` data</span><div><button disabled>&lt;</button><button class="active">1</button><button disabled>&gt;</button></div></div>
 </div>`
@@ -954,7 +969,7 @@ func ownerInvoices(vm dashboard.ViewModel) string {
 			href += "&filter=" + url.QueryEscape(filter)
 		}
 		pct := orderPaymentPercent(order)
-		invoiceList.WriteString(`<a` + className + ` href="` + attr(href) + `" hx-get="` + attr(href) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true"><strong>` + esc(order.ClientName) + `</strong><span>` + esc(order.Code) + ` &middot; ` + esc(orderStatusLabel(order.Status)) + `</span><span><span class="progress-line"><i style="width:` + percentStyle(pct) + `"></i></span>` + intText(pct) + `% &middot; Sisa ` + money(orderRemaining(order)) + `</span><strong>` + money(order.Total) + `</strong></a>`)
+		invoiceList.WriteString(`<a` + className + ` href="` + attr(href) + `" hx-get="` + attr(href) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true"><strong>` + esc(order.ClientName) + `</strong><span>` + esc(order.Code) + ` &middot; ` + esc(billingStatusLabel(order.Status, order.Paid)) + `</span><span><span class="progress-line"><i style="width:` + percentStyle(pct) + `"></i></span>` + intText(pct) + `% &middot; Sisa ` + money(orderRemaining(order)) + `</span><strong>` + money(order.Total) + `</strong></a>`)
 	}
 	if invoiceList.Len() == 0 {
 		invoiceList.WriteString(`<p class="empty-note">Tidak ada invoice pada filter ini.</p>`)
@@ -984,8 +999,8 @@ func ownerInvoices(vm dashboard.ViewModel) string {
 	if paymentRows.Len() == 0 {
 		paymentRows.WriteString(`<tr><td colspan="5">Belum ada cicilan.</td></tr>`)
 	}
-	paymentsTable := `<table class="data-table mt-3"><thead><tr><th>Tanggal &amp; Catatan</th><th>Jumlah</th><th>Status</th><th>Bukti</th><th>Aksi</th></tr></thead><tbody>` + paymentRows.String() + `</tbody></table>`
-	statusClass := orderStatusClass(active.Status)
+	paymentsTable := `<table class="data-table compact mt-3"><thead><tr><th>Tanggal &amp; Catatan</th><th>Jumlah</th><th>Status</th><th>Bukti</th><th>Aksi</th></tr></thead><tbody>` + paymentRows.String() + `</tbody></table>`
+	statusClass := billingStatusClass(active.Status, active.Paid)
 	client := findClientByID(vm.Clients, active.ClientID)
 	waHref := waLink(client.Phone, "Halo "+active.ClientName+", ini invoice "+active.Code+" sebesar "+money(active.Total)+" dari Formora Taiwan.")
 	mailHref := mailtoLink(client.Email, "Invoice "+active.Code, "Halo "+active.ClientName+",\n\nBerikut invoice "+active.Code+" sebesar "+money(active.Total)+".\n\nTerima kasih.")
@@ -997,11 +1012,13 @@ func ownerInvoices(vm dashboard.ViewModel) string {
 	manualInstallmentForm := `<form method="post" action="/owner/invoices/` + attr(active.ID) + `/payments/create" class="student-upload-form mt-3"><label>Tambah Cicilan Manual (IDR)<input name="amount" type="number" min="1" max="` + strconv.FormatInt(active.Total-active.Paid, 10) + `" required placeholder="Contoh: 2000000"></label><label>Catatan<input name="note" placeholder="Contoh: Transfer BCA a.n. client"></label><button class="outline-button" type="submit">Tambah Cicilan</button></form>`
 
 	var statusAction string
-	switch active.Status {
-	case dashboard.OrderPaid:
+	switch {
+	case active.Status == dashboard.OrderPaid:
 		statusAction = `<div class="invoice-status-note is-paid"><strong>Invoice sudah lunas</strong><p>Pembayaran sudah tercatat penuh di sistem.</p></div>`
-	case dashboard.OrderWaitingVerification:
+	case active.Status == dashboard.OrderWaitingVerification:
 		statusAction = `<div class="invoice-status-note"><strong>Menunggu verifikasi</strong><p>Client sudah mengirim cicilan baru. Verifikasi atau tolak dari daftar Riwayat Cicilan di bawah, atau tandai lunas langsung kalau sudah pasti.</p><form method="post" action="/owner/orders/mark-paid"><input type="hidden" name="order_code" value="` + attr(active.Code) + `"><button class="success-button" type="submit">Tandai Lunas</button></form>` + manualInstallmentForm + `</div>`
+	case active.Paid > 0:
+		statusAction = `<div class="invoice-status-note"><strong>Cicilan masuk</strong><p>Sudah ada cicilan tercatat, tapi belum lunas. Catat cicilan berikutnya, atau tandai lunas manual kalau sisanya sudah ditransfer di luar sistem.</p><form method="post" action="/owner/orders/mark-paid"><input type="hidden" name="order_code" value="` + attr(active.Code) + `"><button class="outline-button" type="submit">Tandai Lunas Manual</button></form>` + manualInstallmentForm + `</div>`
 	default:
 		statusAction = `<div class="invoice-status-note"><strong>Belum ada pembayaran</strong><p>Catat cicilan yang sudah masuk, atau tandai lunas manual jika client sudah transfer penuh di luar sistem.</p><form method="post" action="/owner/orders/mark-paid"><input type="hidden" name="order_code" value="` + attr(active.Code) + `"><button class="outline-button" type="submit">Tandai Lunas Manual</button></form>` + manualInstallmentForm + `</div>`
 	}
@@ -1012,7 +1029,7 @@ func ownerInvoices(vm dashboard.ViewModel) string {
   <section class="panel">
     <div class="invoice-head"><div><p>Invoice <strong>#` + esc(active.Code) + `</strong></p><span>` + esc(active.ClientName) + ` &middot; ` + esc(active.PackageName) + `</span></div><div><p>Jatuh Tempo</p><strong>` + esc(dateLabel(active.DueDate)) + `</strong></div></div>
     <div class="invoice-layout">
-      <div><dl class="detail-grid"><div><dt>Nama Klien</dt><dd>` + esc(active.ClientName) + `</dd></div><div><dt>Paket / Layanan</dt><dd>` + esc(active.PackageName) + `</dd></div><div><dt>Kode Pesanan</dt><dd>` + esc(active.Code) + `</dd></div><div><dt>Total Tagihan</dt><dd>` + money(active.Total) + `</dd></div><div><dt>Status Pembayaran</dt><dd><span class="status ` + statusClass + `">` + esc(orderStatusLabel(active.Status)) + `</span></dd></div></dl><div class="invoice-box"><h3>Rincian Tagihan</h3><div><span>` + esc(active.PackageName) + `</span><strong>` + money(active.Total) + `</strong></div><div><span>Sudah Dibayar (Uang Masuk)</span><strong>` + money(active.Paid) + `</strong></div><div class="total"><span>Kekurangan</span><strong>` + money(active.Total-active.Paid) + `</strong></div></div><div class="invoice-box"><h3>Riwayat Cicilan</h3>` + paymentsTable + `</div></div>
+      <div><dl class="detail-grid"><div><dt>Nama Klien</dt><dd>` + esc(active.ClientName) + `</dd></div><div><dt>Paket / Layanan</dt><dd>` + esc(active.PackageName) + `</dd></div><div><dt>Kode Pesanan</dt><dd>` + esc(active.Code) + `</dd></div><div><dt>Total Tagihan</dt><dd>` + money(active.Total) + `</dd></div><div><dt>Status Pembayaran</dt><dd><span class="status ` + statusClass + `">` + esc(billingStatusLabel(active.Status, active.Paid)) + `</span></dd></div></dl><div class="invoice-box"><h3>Rincian Tagihan</h3><div><span>` + esc(active.PackageName) + `</span><strong>` + money(active.Total) + `</strong></div><div><span>Sudah Dibayar (Uang Masuk)</span><strong>` + money(active.Paid) + `</strong></div><div class="total"><span>Kekurangan</span><strong>` + money(active.Total-active.Paid) + `</strong></div></div><div class="invoice-box"><h3>Riwayat Cicilan</h3>` + paymentsTable + `</div></div>
       <div class="invoice-rail">` + statusAction + commActions + `</div>
     </div>
   </section>
@@ -1346,7 +1363,7 @@ func studentPayments(vm dashboard.ViewModel) string {
 			className = ` class="active"`
 		}
 		href := "/student/payments?order=" + url.QueryEscape(order.Code)
-		invoiceList.WriteString(`<a` + className + ` href="` + attr(href) + `" hx-get="` + attr(href) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">` + esc(order.Code) + ` <span>` + esc(orderStatusLabel(order.Status)) + `</span><strong>` + money(order.Total) + `</strong></a>`)
+		invoiceList.WriteString(`<a` + className + ` href="` + attr(href) + `" hx-get="` + attr(href) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">` + esc(order.Code) + ` <span>` + esc(billingStatusLabel(order.Status, order.Paid)) + `</span><strong>` + money(order.Total) + `</strong></a>`)
 	}
 	remaining := active.Total - active.Paid
 	if remaining < 0 {
@@ -1360,9 +1377,13 @@ func studentPayments(vm dashboard.ViewModel) string {
 	}
 
 	var paymentRows strings.Builder
+	verifiedCount := 0
 	for _, payment := range vm.OrderPayments {
 		if payment.OrderID != active.ID {
 			continue
+		}
+		if payment.Status == dashboard.PaymentVerified {
+			verifiedCount++
 		}
 		note := payment.Note
 		if note == "" {
@@ -1375,13 +1396,33 @@ func studentPayments(vm dashboard.ViewModel) string {
 		paymentRows.WriteString(`<tr><td>` + esc(dateLabel(payment.SubmittedAt)) + `<span class="block text-xs text-slate-500">` + esc(note) + `</span></td><td>` + money(payment.Amount) + `</td><td><span class="status ` + paymentStatusClass(payment.Status) + `">` + paymentStatusLabel(payment.Status) + `</span></td><td>` + proofCell + `</td></tr>`)
 	}
 	if paymentRows.Len() == 0 {
-		paymentRows.WriteString(`<tr><td colspan="4">Belum ada cicilan.</td></tr>`)
+		paymentRows.WriteString(`<tr><td colspan="4">Belum ada pembayaran.</td></tr>`)
 	}
-	paymentsTable := `<div class="invoice-box"><h3>Riwayat Cicilan</h3><table class="data-table mt-3"><thead><tr><th>Tanggal &amp; Catatan</th><th>Jumlah</th><th>Status</th><th>Bukti</th></tr></thead><tbody>` + paymentRows.String() + `</tbody></table></div>`
+	paymentsTable := `<div class="invoice-box"><h3>Riwayat Pembayaran</h3><table class="data-table compact mt-3"><thead><tr><th>Tanggal &amp; Catatan</th><th>Jumlah</th><th>Status</th><th>Bukti</th></tr></thead><tbody>` + paymentRows.String() + `</tbody></table></div>`
 	paidPercent := orderPaymentPercent(active)
 	progressBlock := `<div class="invoice-box"><h3>Progress Pembayaran</h3><div class="stage-progress"><i style="width:` + percentStyle(paidPercent) + `"></i></div><p class="text-xs text-slate-500 mt-1">` + intText(paidPercent) + `% dari total tagihan sudah dibayar</p></div>`
 
-	return `<div class="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]"><aside class="panel"><h2 class="mb-4 text-base font-semibold">Daftar Invoice</h2><div class="invoice-list">` + invoiceList.String() + `</div></aside><section class="panel"><div class="invoice-head"><div><p>Detail Invoice</p><strong>` + esc(active.Code) + `</strong></div><strong class="text-2xl">` + money(active.Total) + `</strong></div>` + progressBlock + `<dl class="detail-grid"><div><dt>Client</dt><dd>` + esc(active.ClientName) + `</dd></div><div><dt>Paket</dt><dd>` + esc(active.PackageName) + `</dd></div><div><dt>Status</dt><dd><span class="status ` + orderStatusClass(active.Status) + `">` + esc(orderStatusLabel(active.Status)) + `</span></dd></div><div><dt>Jatuh Tempo</dt><dd>` + esc(dateLabel(active.DueDate)) + `</dd></div></dl><div class="invoice-box"><h3>Rincian</h3><div><span>Subtotal</span><strong>` + money(active.Total) + `</strong></div><div><span>Sudah Dibayar</span><strong>` + money(active.Paid) + `</strong></div><div class="total"><span>Sisa</span><strong>` + money(remaining) + `</strong></div></div>` + paymentsTable + paymentAction + `</section></div>`
+	methodLabel := "Belum Ada Pembayaran"
+	switch {
+	case verifiedCount == 1:
+		methodLabel = "Sekali Bayar"
+	case verifiedCount > 1:
+		methodLabel = "Cicilan " + intText(verifiedCount) + "x"
+	}
+	payoffLabel := "Belum Lunas"
+	if active.PaidAt != nil {
+		payoffLabel = dateLabel(*active.PaidAt)
+	}
+	nextDue := "-"
+	if remaining > 0 {
+		nextDue = money(remaining) + " (jatuh tempo " + dateLabel(active.DueDate) + ")"
+	}
+
+	letterhead := `<div class="invoice-letterhead"><div><strong>` + esc(vm.AppName) + `</strong><span>Taiwan Education Consultant</span></div><div class="invoice-letterhead-right"><span>INVOICE</span><strong>#` + esc(active.Code) + `</strong></div></div>`
+	billInfo := `<div class="invoice-bill-row"><div class="invoice-box"><h3>Ditagihkan Kepada</h3><p class="font-semibold">` + esc(active.ClientName) + `</p><p class="text-sm text-slate-500 mt-1">` + esc(active.PackageName) + `</p></div><dl class="detail-grid"><div><dt>Tanggal Terbit</dt><dd>` + esc(dateLabel(active.CreatedAt)) + `</dd></div><div><dt>Metode Pembayaran</dt><dd>` + esc(methodLabel) + `</dd></div><div><dt>Tanggal Pelunasan</dt><dd>` + esc(payoffLabel) + `</dd></div><div><dt>Status</dt><dd><span class="status ` + billingStatusClass(active.Status, active.Paid) + `">` + esc(billingStatusLabel(active.Status, active.Paid)) + `</span></dd></div></dl></div>`
+	summaryBox := `<div class="invoice-box"><h3>Ringkasan Pembayaran</h3><div><span>Subtotal</span><strong>` + money(active.Total) + `</strong></div><div><span>Sudah Dibayar</span><strong>-` + money(active.Paid) + `</strong></div><div class="total"><span>Sisa Tagihan</span><strong>` + money(remaining) + `</strong></div><div><span>Tagihan Berikutnya</span><strong>` + esc(nextDue) + `</strong></div></div>`
+
+	return `<div class="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]"><aside class="panel"><h2 class="mb-4 text-base font-semibold">Daftar Invoice</h2><div class="invoice-list">` + invoiceList.String() + `</div></aside><section class="panel">` + letterhead + billInfo + progressBlock + summaryBox + paymentsTable + paymentAction + `</section></div>`
 }
 
 func settingsPanel(vm dashboard.ViewModel, role string, includeFinance bool) string {
@@ -2141,6 +2182,26 @@ func orderStatusClass(status dashboard.OrderStatus) string {
 	}
 }
 
+// billingStatusLabel/billingStatusClass are orderStatusLabel/orderStatusClass
+// aware of the amount actually paid so far — an order can be OrderUnpaid
+// (no installment fully clears it) while still having a real partial
+// payment sitting on it, which read as "Belum Dibayar" before even though
+// money had already come in. "Cicilan Masuk" replaces that label whenever
+// paid > 0 but the order isn't fully paid or mid-verification yet.
+func billingStatusLabel(status dashboard.OrderStatus, paid int64) string {
+	if status == dashboard.OrderUnpaid && paid > 0 {
+		return "Cicilan Masuk"
+	}
+	return orderStatusLabel(status)
+}
+
+func billingStatusClass(status dashboard.OrderStatus, paid int64) string {
+	if status == dashboard.OrderUnpaid && paid > 0 {
+		return "blue"
+	}
+	return orderStatusClass(status)
+}
+
 func paymentStatusLabel(status dashboard.PaymentStatus) string {
 	switch status {
 	case dashboard.PaymentVerified:
@@ -2317,6 +2378,20 @@ func initials(name string) string {
 
 func esc(value string) string {
 	return template.HTMLEscapeString(value)
+}
+
+// truncatedBlock renders body text clamped to ~4 lines with a "Lihat
+// Selengkapnya" toggle when it's long enough to otherwise blow up a card's
+// height (e.g. a long template reply) — short text renders as a plain
+// paragraph, untouched. The toggle is pure CSS/JS (bindExpandToggles in
+// app.js), no server round-trip.
+func truncatedBlock(text string) string {
+	body := esc(text)
+	const previewThreshold = 220
+	if len(text) <= previewThreshold {
+		return `<p>` + body + `</p>`
+	}
+	return `<p class="clamp-text">` + body + `</p><button type="button" class="expand-toggle" data-expand-toggle>Lihat Selengkapnya</button>`
 }
 
 func attr(value string) string {

@@ -54,6 +54,7 @@ type Store interface {
 	CreateStaff(ctx context.Context, viewer dashboard.User, input dashboard.CreateStaffInput) (dashboard.User, error)
 	UpdateStaff(ctx context.Context, viewer dashboard.User, staffID string, input dashboard.UpdateStaffInput) (dashboard.User, error)
 	ToggleStaffActive(ctx context.Context, viewer dashboard.User, staffID string) error
+	DeleteStaff(ctx context.Context, viewer dashboard.User, staffID string) error
 	ResetStaffPassword(ctx context.Context, viewer dashboard.User, staffID string) (dashboard.User, string, error)
 	UpdateOwnProfile(ctx context.Context, viewer dashboard.User, input dashboard.UpdateOwnProfileInput) (dashboard.User, error)
 	ChangeOwnPassword(ctx context.Context, viewer dashboard.User, currentPassword, newPassword string) error

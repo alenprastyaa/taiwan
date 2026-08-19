@@ -34,7 +34,7 @@ func templatesPanel(vm dashboard.ViewModel) string {
 		if category == "" {
 			category = "Umum"
 		}
-		cards.WriteString(`<article class="panel service-card"><span class="service-badge bg-violet-100 text-violet-700">` + esc(category) + `</span><h2>` + esc(tpl.Title) + `</h2><p>` + esc(tpl.Body) + `</p><button type="button" class="outline-button small" data-copy-text="` + attr(tpl.Body) + `">Salin Teks</button></article>`)
+		cards.WriteString(`<article class="panel service-card"><span class="service-badge bg-violet-100 text-violet-700">` + esc(category) + `</span><h2>` + esc(tpl.Title) + `</h2>` + truncatedBlock(tpl.Body) + `<button type="button" class="outline-button small" data-copy-text="` + attr(tpl.Body) + `">Salin Teks</button></article>`)
 	}
 
 	return `<div class="space-y-5">` + toolbar + managePanel + `<div class="grid gap-5 xl:grid-cols-3">` + cards.String() + `</div></div>`

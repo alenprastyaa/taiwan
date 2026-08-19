@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 
@@ -68,6 +69,22 @@ func (h Handler) toggleStaffActive(w http.ResponseWriter, r *http.Request) {
 	notice := "Status staf berhasil diperbarui."
 	if err != nil {
 		notice = "Gagal mengubah status staf."
+	}
+	http.Redirect(w, r, staffManagementPath+"?notice="+url.QueryEscape(notice), http.StatusSeeOther)
+}
+
+func (h Handler) deleteStaff(w http.ResponseWriter, r *http.Request) {
+	viewer := currentUser(r)
+	if viewer.Role != dashboard.RoleOwner {
+		http.Error(w, "akses ditolak", http.StatusForbidden)
+		return
+	}
+	err := h.store.DeleteStaff(r.Context(), viewer, chi.URLParam(r, "staffID"))
+	notice := "Akun staf berhasil dihapus permanen."
+	if errors.Is(err, dashboard.ErrConflict) {
+		notice = "Staf tidak bisa dihapus karena masih jadi PIC client, atau punya task/pengeluaran/pengiriman tercatat. Nonaktifkan saja jika sudah tidak dipakai."
+	} else if err != nil {
+		notice = "Gagal menghapus akun staf."
 	}
 	http.Redirect(w, r, staffManagementPath+"?notice="+url.QueryEscape(notice), http.StatusSeeOther)
 }

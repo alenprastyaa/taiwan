@@ -22,7 +22,32 @@ func staffManagementPanel(vm dashboard.ViewModel) string {
 		return staffEditPanel(vm, path)
 	}
 
-	toolbar := `<div class="panel-head"><div><h2 class="text-lg font-semibold">Manajemen Staf</h2><p class="text-sm text-slate-500">Kelola akun staf konsultan: tambah, ubah data, reset password, atau nonaktifkan akses.</p></div>` + toggleFormButton(vm.ShowCreateForm, "+ Tambah Staf", path) + `</div>`
+	// Default view is active staff only, like the Client page's active
+	// roster — a deactivated staff account falls into an archive view
+	// (below) instead of cluttering the working list, but stays reachable
+	// there to reactivate or permanently delete.
+	roster := make([]dashboard.User, 0, len(vm.StaffAccounts))
+	heading := "Manajemen Staf"
+	archiveLink := `<a class="outline-button" href="` + attr(path) + `?archived=1" hx-get="` + attr(path) + `?archived=1" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Staf Nonaktif</a>`
+	emptyNote := `Belum ada akun staf. Klik "+ Tambah Staf" untuk menambahkan.`
+	if vm.ShowArchivedClients {
+		heading = "Staf Nonaktif"
+		archiveLink = `<a class="outline-button" href="` + attr(path) + `" hx-get="` + attr(path) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Lihat Staf Aktif</a>`
+		emptyNote = "Belum ada staf nonaktif."
+		for _, staff := range vm.StaffAccounts {
+			if !staff.Active {
+				roster = append(roster, staff)
+			}
+		}
+	} else {
+		for _, staff := range vm.StaffAccounts {
+			if staff.Active {
+				roster = append(roster, staff)
+			}
+		}
+	}
+
+	toolbar := `<div class="panel-head"><div><h2 class="text-lg font-semibold">` + heading + `</h2><p class="text-sm text-slate-500">Kelola akun staf konsultan: tambah, ubah data, reset password, atau nonaktifkan akses.</p></div><div class="toolbar-actions">` + archiveLink + toggleFormButton(vm.ShowCreateForm, "+ Tambah Staf", path) + `</div></div>`
 
 	createPanel := ""
 	if vm.ShowCreateForm {
@@ -31,7 +56,7 @@ func staffManagementPanel(vm dashboard.ViewModel) string {
 	}
 
 	var rows strings.Builder
-	for i, staff := range vm.StaffAccounts {
+	for i, staff := range roster {
 		statusClass := "green"
 		statusLabel := "Aktif"
 		toggleLabel := "Nonaktifkan"
@@ -51,10 +76,12 @@ func staffManagementPanel(vm dashboard.ViewModel) string {
 		editHref := path + "?edit=" + attr(staff.ID)
 		resetConfirm := "Reset password " + staff.Name + "? Password baru akan digenerate dan ditampilkan sekali."
 		toggleConfirm := toggleLabel + " akun " + staff.Name + "?"
-		rows.WriteString(`<tr><td>` + intText(i+1) + `</td><td><strong>` + esc(staff.Name) + `</strong><span>` + esc(staff.Username) + `</span></td><td>` + esc(email) + `</td><td>` + esc(phone) + `</td><td><span class="status ` + statusClass + `">` + statusLabel + `</span></td><td>` + esc(dateLabel(staff.CreatedAt)) + `</td><td><a class="icon-action" href="` + attr(editHref) + `" hx-get="` + attr(editHref) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Edit</a> <form method="post" action="` + path + `/` + attr(staff.ID) + `/reset-password" class="inline-form" data-confirm="` + attr(resetConfirm) + `"><button type="submit" class="icon-action">Reset Password</button></form> <form method="post" action="` + path + `/` + attr(staff.ID) + `/toggle-active" class="inline-form" data-confirm="` + attr(toggleConfirm) + `"><button type="submit" class="icon-action">` + toggleLabel + `</button></form></td></tr>`)
+		deleteConfirm := "Hapus permanen akun staf " + staff.Name + "? Hanya bisa jika staf ini tidak lagi jadi PIC client dan tidak punya task/pengeluaran/pengiriman tercatat. Tindakan ini tidak bisa dibatalkan."
+		deleteAction := ` <form method="post" action="` + path + `/` + attr(staff.ID) + `/delete" class="inline-form" data-confirm="` + attr(deleteConfirm) + `"><button type="submit" class="icon-action icon-action-danger">Hapus</button></form>`
+		rows.WriteString(`<tr><td>` + intText(i+1) + `</td><td><strong>` + esc(staff.Name) + `</strong><span>` + esc(staff.Username) + `</span></td><td>` + esc(email) + `</td><td>` + esc(phone) + `</td><td><span class="status ` + statusClass + `">` + statusLabel + `</span></td><td>` + esc(dateLabel(staff.CreatedAt)) + `</td><td><a class="icon-action" href="` + attr(editHref) + `" hx-get="` + attr(editHref) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Edit</a> <form method="post" action="` + path + `/` + attr(staff.ID) + `/reset-password" class="inline-form" data-confirm="` + attr(resetConfirm) + `"><button type="submit" class="icon-action">Reset Password</button></form> <form method="post" action="` + path + `/` + attr(staff.ID) + `/toggle-active" class="inline-form" data-confirm="` + attr(toggleConfirm) + `"><button type="submit" class="icon-action">` + toggleLabel + `</button></form>` + deleteAction + `</td></tr>`)
 	}
 	if rows.Len() == 0 {
-		rows.WriteString(`<tr><td colspan="7">Belum ada akun staf. Klik "+ Tambah Staf" untuk menambahkan.</td></tr>`)
+		rows.WriteString(`<tr><td colspan="7">` + emptyNote + `</td></tr>`)
 	}
 	table := `<div class="panel table-panel"><table class="data-table"><thead><tr><th>No.</th><th>Nama &amp; Username</th><th>Email</th><th>No. WhatsApp</th><th>Status</th><th>Dibuat</th><th>Aksi</th></tr></thead><tbody>` + rows.String() + `</tbody></table></div>`
 

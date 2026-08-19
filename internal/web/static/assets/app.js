@@ -36,6 +36,19 @@ function bindCopyButtons() {
   });
 }
 
+function bindExpandToggles() {
+  // Delegated "Lihat Selengkapnya" / "Sembunyikan" toggle for long text
+  // blocks (template bodies, notes) clamped to a few lines by default.
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-expand-toggle]");
+    if (!button) return;
+    const text = button.previousElementSibling;
+    if (!text) return;
+    const expanded = text.classList.toggle("is-expanded");
+    button.textContent = expanded ? "Sembunyikan" : "Lihat Selengkapnya";
+  });
+}
+
 function closeSidebar() {
   document.body.classList.remove(sidebarOpenClass);
 }
@@ -292,6 +305,7 @@ document.addEventListener("DOMContentLoaded", () => {
   bindAutoSubmitSelects();
   bindConfirmForms();
   bindCopyButtons();
+  bindExpandToggles();
   bindOrderCalc();
   syncTitle();
   initOrderCalc();

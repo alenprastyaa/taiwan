@@ -126,6 +126,7 @@ func NewRouter(deps Dependencies) http.Handler {
 		r.Post("/owner/staff/create", h.createStaff)
 		r.Post("/owner/staff/{staffID}/update", h.updateStaff)
 		r.Post("/owner/staff/{staffID}/toggle-active", h.toggleStaffActive)
+		r.Post("/owner/staff/{staffID}/delete", h.deleteStaff)
 		r.Post("/owner/staff/{staffID}/reset-password", h.resetStaffPassword)
 		r.Post("/profile/update", h.updateProfile)
 		r.Post("/profile/change-password", h.changeOwnPassword)
@@ -491,7 +492,12 @@ func (h Handler) studentInvoicePDF(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, order := range orders {
 		if strings.EqualFold(order.Code, code) {
-			pdf := renderInvoicePDF(h.cfg.App.Name, order)
+			payments, err := h.store.ListAllOrderPayments(r.Context(), viewer, viewer.Role)
+			if err != nil {
+				http.Error(w, "akses invoice ditolak", http.StatusForbidden)
+				return
+			}
+			pdf := renderInvoicePDF(h.cfg.App.Name, order, payments)
 			w.Header().Set("Content-Type", "application/pdf")
 			w.Header().Set("Content-Disposition", "attachment; filename="+strconvQuote(order.Code+".pdf"))
 			_, _ = w.Write(pdf)

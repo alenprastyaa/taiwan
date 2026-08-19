@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,7 +15,12 @@ import (
 // bill-to and invoice meta side by side, a line-item table, a totals block,
 // and payment instructions in the footer. Replaces the earlier hand-rolled
 // PDF that was just eight lines of plain left-aligned text.
-func renderInvoicePDF(appName string, order dashboard.Order) []byte {
+//
+// payments is the full payment log (any order) — filtered down to this
+// order's verified entries to derive a "Metode Pembayaran" label (e.g.
+// "Cicilan 3x") from real history, since there's no separate installment
+// *plan* concept to read a schedule from.
+func renderInvoicePDF(appName string, order dashboard.Order, payments []dashboard.OrderPayment) []byte {
 	pdf := fpdf.New("P", "mm", "A4", "")
 	pdf.SetMargins(20, 20, 20)
 	pdf.AddPage()
@@ -26,6 +32,24 @@ func renderInvoicePDF(appName string, order dashboard.Order) []byte {
 	remaining := order.Total - order.Paid
 	if remaining < 0 {
 		remaining = 0
+	}
+
+	verifiedCount := 0
+	for _, payment := range payments {
+		if payment.OrderID == order.ID && payment.Status == dashboard.PaymentVerified {
+			verifiedCount++
+		}
+	}
+	methodLabel := "Belum Bayar"
+	switch {
+	case verifiedCount == 1:
+		methodLabel = "Sekali Bayar"
+	case verifiedCount > 1:
+		methodLabel = "Cicilan " + strconv.Itoa(verifiedCount) + "x"
+	}
+	payoffLabel := "Belum Lunas"
+	if order.PaidAt != nil {
+		payoffLabel = order.PaidAt.Format("02 Jan 2006")
 	}
 
 	navy := func() { pdf.SetTextColor(7, 18, 37) }
@@ -44,7 +68,7 @@ func renderInvoicePDF(appName string, order dashboard.Order) []byte {
 	pdf.SetXY(20, 29)
 	pdf.SetFont("Helvetica", "", 10)
 	gray()
-	pdf.CellFormat(100, 6, "Study Abroad Consultant", "", 0, "L", false, 0, "")
+	pdf.CellFormat(100, 6, "Taiwan Education Consultant", "", 0, "L", false, 0, "")
 	pdf.SetFont("Helvetica", "B", 11)
 	navy()
 	pdf.CellFormat(70, 6, "#"+order.Code, "", 0, "R", false, 0, "")
@@ -79,10 +103,10 @@ func renderInvoicePDF(appName string, order dashboard.Order) []byte {
 		pdf.SetTextColor(r, g, b)
 		pdf.CellFormat(40, 6, value, "", 0, "R", false, 0, "")
 	}
-	statusLabel, statusR, statusG, statusB := invoiceStatusStyle(order.Status)
-	metaRow(leftY, "No. Invoice", order.Code, 15, 23, 42)
-	metaRow(leftY+7, "Tanggal Terbit", order.CreatedAt.Format("02 Jan 2006"), 15, 23, 42)
-	metaRow(leftY+14, "Jatuh Tempo", order.DueDate.Format("02 Jan 2006"), 15, 23, 42)
+	statusLabel, statusR, statusG, statusB := invoiceStatusStyle(order.Status, order.Paid)
+	metaRow(leftY, "Tanggal Terbit", order.CreatedAt.Format("02 Jan 2006"), 15, 23, 42)
+	metaRow(leftY+7, "Metode Bayar", methodLabel, 15, 23, 42)
+	metaRow(leftY+14, "Tgl Pelunasan", payoffLabel, 15, 23, 42)
 	metaRow(leftY+21, "Status", statusLabel, statusR, statusG, statusB)
 
 	// Line-item table: shaded header row, one bordered data row.
@@ -131,6 +155,21 @@ func renderInvoicePDF(appName string, order dashboard.Order) []byte {
 		balanceLabel = "Total Lunas"
 	}
 	totalRow(balanceLabel, formatIDR(remaining), true)
+	if remaining > 0 {
+		nextY := totalsY + float64(row)*rowH
+		pdf.SetXY(totalsX, nextY)
+		pdf.SetFont("Helvetica", "", 10)
+		gray()
+		pdf.CellFormat(45, 4.5, "Tagihan Berikutnya", "", 0, "L", false, 0, "")
+		pdf.SetXY(totalsX, nextY+4.5)
+		pdf.SetFont("Helvetica", "", 7)
+		pdf.CellFormat(45, 3, "jatuh tempo "+order.DueDate.Format("02 Jan 2006"), "", 0, "L", false, 0, "")
+		pdf.SetXY(totalsX+45, nextY)
+		pdf.SetFont("Helvetica", "B", 10)
+		gray()
+		pdf.CellFormat(35, 4.5, formatIDR(remaining), "", 0, "R", false, 0, "")
+		row++
+	}
 
 	// Payment proof, if the client already submitted one.
 	noteY := totalsY + float64(row)*rowH + 12
@@ -167,12 +206,14 @@ func renderInvoicePDF(appName string, order dashboard.Order) []byte {
 	return buf.Bytes()
 }
 
-func invoiceStatusStyle(status dashboard.OrderStatus) (label string, r, g, b int) {
-	switch status {
-	case dashboard.OrderPaid:
+func invoiceStatusStyle(status dashboard.OrderStatus, paid int64) (label string, r, g, b int) {
+	switch {
+	case status == dashboard.OrderPaid:
 		return "LUNAS", 5, 150, 105
-	case dashboard.OrderWaitingVerification:
+	case status == dashboard.OrderWaitingVerification:
 		return "MENUNGGU VERIFIKASI", 180, 83, 9
+	case paid > 0:
+		return "CICILAN MASUK", 29, 78, 216
 	default:
 		return "BELUM DIBAYAR", 185, 28, 28
 	}
