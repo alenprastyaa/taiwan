@@ -34,22 +34,34 @@ func (h Handler) createClient(w http.ResponseWriter, r *http.Request) {
 		Campus:      r.FormValue("campus"),
 		PICStaffID:  r.FormValue("pic_staff_id"),
 	}
-	if viewer.Role == dashboard.RoleOwner {
-		input.InvoiceTotal, _ = strconv.ParseInt(strings.TrimSpace(r.FormValue("invoice_total")), 10, 64)
-		input.AmountPaid, _ = strconv.ParseInt(strings.TrimSpace(r.FormValue("amount_paid")), 10, 64)
-	}
 	// The package decides whether this client gets a student login account,
 	// not whatever the form happened to submit — a simple service (e.g.
 	// document legalization) never creates one, even if the client somehow
-	// posts a username/password for it.
+	// posts a username/password for it. Its form also only collects name,
+	// phone, and billing amounts, so both owner and staff can set those —
+	// unlike the full onboarding form, where invoice fields stay owner-only.
+	requiresAccount := true
 	if packages, err := h.store.ListServicePackages(r.Context()); err == nil {
 		for _, pkg := range packages {
-			if pkg.Name == input.PackageName && !pkg.RequiresAccount {
-				input.Username = ""
-				input.Password = ""
+			if pkg.Name == input.PackageName {
+				requiresAccount = pkg.RequiresAccount
 				break
 			}
 		}
+	}
+	if !requiresAccount {
+		input.Username = ""
+		input.Password = ""
+	}
+	if viewer.Role == dashboard.RoleOwner || !requiresAccount {
+		input.InvoiceTotal, _ = strconv.ParseInt(strings.TrimSpace(r.FormValue("invoice_total")), 10, 64)
+		input.AmountPaid, _ = strconv.ParseInt(strings.TrimSpace(r.FormValue("amount_paid")), 10, 64)
+	}
+	// The no-account form has no PIC picker — default it to whichever staff
+	// is doing the adding, instead of falling through to the repository's
+	// arbitrary "first staff" default.
+	if input.PICStaffID == "" && viewer.Role == dashboard.RoleStaff {
+		input.PICStaffID = viewer.ID
 	}
 	user, err := h.store.CreateStudent(r.Context(), input)
 	if err != nil {

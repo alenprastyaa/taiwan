@@ -513,9 +513,9 @@ func clientsPanel(vm dashboard.ViewModel, includeStaffFilter bool) string {
 	// Owner needs billing visibility on this page (that's the point of the
 	// Client menu); staff's copy stays lean — name/package/PIC/status/action
 	// only — so the table fits a laptop screen without horizontal scroll on
-	// either role.
-	showBilling := vm.Role == dashboard.RoleOwner
-	orderSummaries := summarizeClientOrders(vm.Orders)
+	// either role. Billing detail (Total/Dibayar/Sisa/Status Pembayaran)
+	// lives on the Invoice page, not duplicated here.
+	showProgress := vm.Role == dashboard.RoleOwner
 	var rows strings.Builder
 	for i, client := range clients {
 		editHref := path + "?edit=" + attr(client.ID)
@@ -549,26 +549,17 @@ func clientsPanel(vm dashboard.ViewModel, includeStaffFilter bool) string {
 		if !client.Active {
 			activeBadge = `<span class="status red">Nonaktif</span>`
 		}
-		billingCells := ""
-		if showBilling {
-			summary := orderSummaries[client.ID]
-			billing := `<span class="status slate">Belum ada order</span>`
-			if summary.count > 0 {
-				sisa := summary.total - summary.paid
-				if sisa < 0 {
-					sisa = 0
-				}
-				billing = `<div class="billing-cell"><span>Total <strong>` + money(summary.total) + `</strong></span><span>Dibayar <strong>` + money(summary.paid) + `</strong></span><span>Sisa <strong>` + money(sisa) + `</strong></span><span class="status ` + billingStatusClass(summary.status, summary.paid) + `">` + esc(billingStatusLabel(summary.status, summary.paid)) + `</span></div>`
-			}
-			billingCells = `<td><span class="progress-line"><i style="width:` + percentStyle(client.Progress) + `"></i></span>` + intText(client.Progress) + `%</td><td>` + billing + `</td>`
+		progressCell := ""
+		if showProgress {
+			progressCell = `<td><span class="progress-line"><i style="width:` + percentStyle(client.Progress) + `"></i></span>` + intText(client.Progress) + `%</td>`
 		}
-		rows.WriteString(`<tr><td>` + intText(i+1) + `</td><td><strong>` + esc(client.Name) + `</strong><span>` + esc(client.Email) + `</span></td><td>` + esc(client.PackageName) + `</td><td>` + esc(client.PICName) + `</td><td>` + activeBadge + ` ` + esc(client.Status) + `</td>` + billingCells + `<td><a class="icon-action" href="` + attr(editHref) + `" hx-get="` + attr(editHref) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Edit</a> <a class="icon-action" href="/` + attr(vm.Role.String()) + `/chat" hx-get="/` + attr(vm.Role.String()) + `/chat" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Chat</a>` + agreementAction + resetAction + toggleAction + deleteAction + `</td></tr>`)
+		rows.WriteString(`<tr><td>` + intText(i+1) + `</td><td><strong>` + esc(client.Name) + `</strong><span>` + esc(client.Email) + `</span></td><td>` + esc(client.PackageName) + `</td><td>` + esc(client.PICName) + `</td><td>` + activeBadge + ` ` + esc(client.Status) + `</td>` + progressCell + `<td><a class="icon-action" href="` + attr(editHref) + `" hx-get="` + attr(editHref) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Edit</a> <a class="icon-action" href="/` + attr(vm.Role.String()) + `/chat" hx-get="/` + attr(vm.Role.String()) + `/chat" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Chat</a>` + agreementAction + resetAction + toggleAction + deleteAction + `</td></tr>`)
 	}
 	colCount := 6
 	headerCells := `<th>No.</th><th>Nama Klien</th><th>Paket / Layanan</th><th>PIC</th><th>Status Terakhir</th><th>Aksi</th>`
-	if showBilling {
-		colCount = 8
-		headerCells = `<th>No.</th><th>Nama Klien</th><th>Paket / Layanan</th><th>PIC</th><th>Status Terakhir</th><th>Progress</th><th>Tagihan</th><th>Aksi</th>`
+	if showProgress {
+		colCount = 7
+		headerCells = `<th>No.</th><th>Nama Klien</th><th>Paket / Layanan</th><th>PIC</th><th>Status Terakhir</th><th>Progress</th><th>Aksi</th>`
 	}
 	if rows.Len() == 0 {
 		rows.WriteString(`<tr><td colspan="` + intText(colCount) + `">` + emptyNote + `</td></tr>`)
@@ -682,40 +673,6 @@ func inactiveClientProfiles(clients []dashboard.ClientProfile) []dashboard.Clien
 	return inactive
 }
 
-// clientOrderSummary aggregates every order a client has into one billing
-// line for the Client table: total billed, total paid, how many orders,
-// and a worst-case status (unpaid outranks waiting-verification outranks
-// paid) so a single client with several orders still gets one clear signal.
-type clientOrderTotals struct {
-	total  int64
-	paid   int64
-	count  int
-	status dashboard.OrderStatus
-}
-
-// summarizeClientOrders does one pass over every order to build a per-client
-// billing summary, instead of the Client table rescanning the full orders
-// slice once per row (O(clients × orders) on a page that used to be O(clients)).
-func summarizeClientOrders(orders []dashboard.Order) map[string]clientOrderTotals {
-	summaries := make(map[string]clientOrderTotals, len(orders))
-	for _, order := range orders {
-		s := summaries[order.ClientID]
-		s.count++
-		s.total += order.Total
-		s.paid += order.Paid
-		switch {
-		case s.count == 1:
-			s.status = order.Status
-		case order.Status == dashboard.OrderUnpaid:
-			s.status = dashboard.OrderUnpaid
-		case order.Status == dashboard.OrderWaitingVerification && s.status != dashboard.OrderUnpaid:
-			s.status = dashboard.OrderWaitingVerification
-		}
-		summaries[order.ClientID] = s
-	}
-	return summaries
-}
-
 func filterClients(clients []dashboard.ClientProfile, status, packageName, pic, search string) []dashboard.ClientProfile {
 	search = strings.ToLower(strings.TrimSpace(search))
 	filtered := make([]dashboard.ClientProfile, 0, len(clients))
@@ -753,21 +710,33 @@ func clientCreateModal(vm dashboard.ViewModel, basePath, cancelPath, packageName
 			break
 		}
 	}
+	packageField := `<input type="hidden" name="package_name" value="` + attr(packageName) + `"><label class="span-2">Paket / Layanan<input type="text" value="` + attr(packageLabel) + `" disabled></label>`
+	invoiceFields := `<label>Total Tagihan (IDR)<input name="invoice_total" type="number" min="0" placeholder="7500000" data-order-total></label><label>Uang Masuk (IDR)<input name="amount_paid" type="number" min="0" placeholder="0" data-order-paid></label><label class="span-2">Kekurangan (IDR)<input type="text" readonly tabindex="-1" data-order-remaining value="0"></label>`
+
+	// A simple service (no login account) only needs enough to bill and
+	// reach the client — name and phone — plus the billing amounts, for
+	// both owner and staff. The full onboarding form (account, email,
+	// negara/kampus, PIC) only applies when the package actually creates a
+	// student login.
+	if !requiresAccount {
+		return `<div class="modal-overlay"><div class="modal-card modal-card-wide">
+  <div class="panel-head"><h3>Tambah Client</h3><a class="outline-button" href="` + attr(cancelPath) + `" hx-get="` + attr(cancelPath) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Batal</a></div>
+  <form method="post" action="` + attr(basePath) + `/create" class="student-upload-form modal-form-grid" autocomplete="off">` + packageField + `<label>Nama Lengkap<input name="name" required placeholder="Nama client" autocomplete="off"></label><label>No. WhatsApp<input name="phone" required placeholder="08xxxxxxxxxx"></label>` + invoiceFields + `<div class="span-2 package-edit-actions"><button class="primary-button" type="submit">Simpan Client</button></div></form>
+</div></div>`
+	}
+
 	var staffOptions strings.Builder
 	for _, staff := range vm.Staff {
 		staffOptions.WriteString(`<option value="` + attr(staff.ID) + `">` + esc(staff.Name) + `</option>`)
 	}
-	invoiceFields := ""
+	ownerInvoiceFields := ""
 	if vm.Role == dashboard.RoleOwner {
-		invoiceFields = `<label>Total Tagihan (IDR)<input name="invoice_total" type="number" min="0" placeholder="7500000" data-order-total></label><label>Uang Masuk (IDR)<input name="amount_paid" type="number" min="0" placeholder="0" data-order-paid></label><label class="span-2">Kekurangan (IDR)<input type="text" readonly tabindex="-1" data-order-remaining value="0"></label>`
+		ownerInvoiceFields = invoiceFields
 	}
-	accountFields := `<p class="span-2 text-xs text-slate-500">Layanan ini tidak membuat akun login student — client cukup tercatat untuk order dan tagihan.</p>`
-	if requiresAccount {
-		accountFields = `<label>Username<input name="username" required placeholder="Untuk login client" autocomplete="off"></label><label>Password<input name="password" type="password" minlength="8" required placeholder="Minimal 8 karakter" autocomplete="new-password"></label>`
-	}
+	accountFields := `<label>Username<input name="username" required placeholder="Untuk login client" autocomplete="off"></label><label>Password<input name="password" type="password" minlength="8" required placeholder="Minimal 8 karakter" autocomplete="new-password"></label>`
 	return `<div class="modal-overlay"><div class="modal-card modal-card-wide">
   <div class="panel-head"><h3>Tambah Client</h3><a class="outline-button" href="` + attr(cancelPath) + `" hx-get="` + attr(cancelPath) + `" hx-target="#app" hx-swap="outerHTML" hx-push-url="true">Batal</a></div>
-  <form method="post" action="` + attr(basePath) + `/create" class="student-upload-form modal-form-grid" autocomplete="off"><input type="hidden" name="package_name" value="` + attr(packageName) + `"><label class="span-2">Paket / Layanan<input type="text" value="` + attr(packageLabel) + `" disabled></label><label>Nama Lengkap<input name="name" required placeholder="Nama client" autocomplete="off"></label>` + accountFields + `<label>Email<input name="email" type="email" placeholder="client@email.com" autocomplete="off"></label><label>No. WhatsApp<input name="phone" placeholder="08xxxxxxxxxx"></label><label>Negara<input name="country" placeholder="Taiwan"></label><label>Kampus<input name="campus" placeholder="Nama kampus"></label><label>PIC Staff<select name="pic_staff_id"><option value="">Otomatis</option>` + staffOptions.String() + `</select></label>` + invoiceFields + `<div class="span-2 package-edit-actions"><button class="primary-button" type="submit">Simpan Client</button></div></form>
+  <form method="post" action="` + attr(basePath) + `/create" class="student-upload-form modal-form-grid" autocomplete="off">` + packageField + `<label>Nama Lengkap<input name="name" required placeholder="Nama client" autocomplete="off"></label>` + accountFields + `<label>Email<input name="email" type="email" placeholder="client@email.com" autocomplete="off"></label><label>No. WhatsApp<input name="phone" placeholder="08xxxxxxxxxx"></label><label>Negara<input name="country" placeholder="Taiwan"></label><label>Kampus<input name="campus" placeholder="Nama kampus"></label><label>PIC Staff<select name="pic_staff_id"><option value="">Otomatis</option>` + staffOptions.String() + `</select></label>` + ownerInvoiceFields + `<div class="span-2 package-edit-actions"><button class="primary-button" type="submit">Simpan Client</button></div></form>
 </div></div>`
 }
 
@@ -1255,13 +1224,13 @@ func staffTasks(vm dashboard.ViewModel) string {
 		if task.Status != dashboard.TaskDone {
 			action = `<form method="post" action="/staff/tasks/` + attr(task.ID) + `/complete"><button class="icon-action" type="submit">Selesai</button></form>`
 		}
-		rows.WriteString(`<tr><td>` + esc(task.TimeLabel) + `</td><td>` + esc(task.Title) + `</td><td>` + esc(task.ClientName) + `</td><td><span class="status ` + priorityClass(task.Priority) + `">` + esc(task.Priority) + `</span></td><td><span class="status ` + taskStatusClass(task.Status) + `">` + esc(taskStatusLabel(task.Status)) + `</span></td><td>` + action + `</td></tr>`)
+		rows.WriteString(`<tr><td>` + esc(task.TimeLabel) + `</td><td>` + esc(task.Title) + `</td><td>` + esc(task.ClientName) + `</td><td><span class="status ` + taskStatusClass(task.Status) + `">` + esc(taskStatusLabel(task.Status)) + `</span></td><td>` + action + `</td></tr>`)
 	}
 	form := ""
 	if vm.ShowCreateForm {
-		form = `<form method="post" action="/staff/tasks/create" class="student-upload-form"><label>Client<select name="client_id" required><option value="">Pilih client</option>` + clientSelectOptions(vm.Clients) + `</select></label><label>Judul Tugas<input name="title" required placeholder="Contoh: Follow up dokumen"></label><label>Waktu<input name="time_label" placeholder="10:00"></label><label>Prioritas<select name="priority"><option>Rendah</option><option selected>Sedang</option><option>Tinggi</option></select></label><button class="primary-button" type="submit">Simpan Task</button></form>`
+		form = `<form method="post" action="/staff/tasks/create" class="student-upload-form"><label>Client<select name="client_id" required><option value="">Pilih client</option>` + clientSelectOptions(vm.Clients) + `</select></label><label>Judul Tugas<input name="title" required placeholder="Contoh: Follow up dokumen"></label><label>Waktu<input name="time_label" placeholder="10:00"></label><button class="primary-button" type="submit">Simpan Task</button></form>`
 	}
-	return `<div class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,.45fr)]"><div class="panel table-panel"><div class="panel-head"><h2>Task & To Do List</h2>` + toggleFormButton(vm.ShowCreateForm, "Tambah Task", "/staff/tasks") + `</div>` + form + `<table class="data-table"><thead><tr><th>Waktu</th><th>Tugas</th><th>Klien</th><th>Prioritas</th><th>Status</th><th>Aksi</th></tr></thead><tbody>` + rows.String() + `</tbody></table></div><div class="right-rail">` + quickSchedule(vm) + recentDocs(vm) + `</div></div>`
+	return `<div class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,.45fr)]"><div class="panel table-panel"><div class="panel-head"><h2>Task & To Do List</h2>` + toggleFormButton(vm.ShowCreateForm, "Tambah Task", "/staff/tasks") + `</div>` + form + `<table class="data-table"><thead><tr><th>Waktu</th><th>Tugas</th><th>Klien</th><th>Status</th><th>Aksi</th></tr></thead><tbody>` + rows.String() + `</tbody></table></div><div class="right-rail">` + quickSchedule(vm) + recentDocs(vm) + `</div></div>`
 }
 
 func staffDocuments(vm dashboard.ViewModel) string {
@@ -1730,7 +1699,7 @@ func taskListCompact(tasks []dashboard.Task) string {
 	var b strings.Builder
 	b.WriteString(`<div class="task-list">`)
 	for _, task := range tasks {
-		b.WriteString(`<div><strong>` + esc(task.TimeLabel) + `</strong><span>` + esc(task.Title) + `</span><em>` + esc(task.ClientName) + `</em><b>` + esc(task.Priority) + `</b></div>`)
+		b.WriteString(`<div><strong>` + esc(task.TimeLabel) + `</strong><span>` + esc(task.Title) + `</span><em>` + esc(task.ClientName) + `</em></div>`)
 	}
 	b.WriteString(`</div>`)
 	return b.String()
@@ -2262,17 +2231,6 @@ func taskStatusClass(status dashboard.TaskStatus) string {
 		return "green"
 	}
 	return "red"
-}
-
-func priorityClass(priority string) string {
-	switch strings.ToLower(priority) {
-	case "tinggi":
-		return "red"
-	case "sedang":
-		return "amber"
-	default:
-		return "green"
-	}
 }
 
 func expenseStatusLabel(status dashboard.ExpenseStatus) string {

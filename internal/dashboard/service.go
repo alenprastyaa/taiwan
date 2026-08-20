@@ -428,7 +428,7 @@ func pageCopy(role Role, section Section) (string, string, string) {
 		case SectionFinance:
 			return "Detail Keuangan", "Ringkasan arus kas dan performa pembayaran.", "Pantau pemasukan, pengeluaran, profit, piutang, dan transaksi terbaru."
 		case SectionClients:
-			return "Client", "Daftar client aktif beserta rincian order dan tagihan.", "Tabel operasional client aktif dengan filter paket, status, staff, dan rincian pembayaran per client."
+			return "Client", "Daftar client aktif beserta status dan progress.", "Tabel operasional client aktif dengan filter paket, status, dan staff. Rincian tagihan ada di menu Invoice."
 		case SectionPipeline:
 			return "Pipeline Keseluruhan", "Pantau tahapan konsultasi sampai selesai.", "Kanban pipeline untuk melihat beban proses per tahap dan bottleneck operasional."
 		case SectionServices:
@@ -461,7 +461,7 @@ func pageCopy(role Role, section Section) (string, string, string) {
 		case SectionServices:
 			return "Paket & Layanan", "Daftar paket dan layanan yang tersedia.", "Tambah client baru dimulai dari sini dengan memilih layanan."
 		case SectionTasks:
-			return "Tugas Saya", "Task list harian berdasarkan prioritas.", "Kelola follow up dokumen, appointment, pembayaran, dan upload berkas."
+			return "Tugas Saya", "Task list harian staff.", "Kelola follow up dokumen, appointment, pembayaran, dan upload berkas."
 		case SectionDocuments:
 			return "Dokumen Review", "Dokumen client yang perlu diperiksa.", "Approve, reject, atau minta revisi dokumen dari client."
 		case SectionExpenses:
